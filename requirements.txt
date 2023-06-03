@@ -1,0 +1,6 @@
+setuptools~=67.6.1
+astropy~=5.2.2
+astroquery~=0.4.6
+numpy~=1.22.1
+scipy~=1.9.1
+starred-deconv~=1.0
