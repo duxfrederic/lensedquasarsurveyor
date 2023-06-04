@@ -43,3 +43,26 @@ def recursively_load_dict_contents_from_group(h5file, path):
         elif isinstance(item, h5py._hl.group.Group):
             ans[key] = recursively_load_dict_contents_from_group(h5file, path + key + '/')
     return ans
+
+
+def update_hdf5(filename, path, data):
+    """
+    Update the hdf5 at `filename`, under the internal path `path`, with the provided data.
+
+    Exemple:
+    PSF = np.ones((64,64))
+    update_hdf5('yourfile.hdf5', 'band1/0/PSF', PSF)
+    provided that the path band1/0 already exists.
+
+    yeah I know, long ass docstring, but I never remember how to handle hdf5 files.
+
+    :param filename: path or string, path to our hdf5 file.
+    :param path: path inside the hdf5 path to update
+    :param data: the data (numpy array) to be saved under this path.
+    :return: None
+
+    """
+    with h5py.File(filename, 'a') as f:
+        if path in f:
+            del f[path]
+        f[path] = data
