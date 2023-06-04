@@ -11,3 +11,5 @@ lensedquasarsutilities
 starred
 pillow
 matplotlib
+jax
+numpyro
