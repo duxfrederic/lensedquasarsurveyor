@@ -16,7 +16,7 @@ from starred.plots import plot_function as ptf
 from starred.utils.noise_utils import propagate_noise
 
 from lensedquasarsutilities.gaia_utilities import get_similar_stars
-from lensedquasarsutilities.legacysurvey_utilities import download_legacy_survey_cutout
+from lensedquasarsutilities.downloader import get_cutouts_file
 from lensedquasarsutilities.stamp_extractor import extract_stamps
 from lensedquasarsutilities import config
 
@@ -55,7 +55,7 @@ def estimate_psf(stars, sigma_2, masks, upsampling_factor=2):
                         wavelet_type_list=['starlet'], method='MC',
                         num_samples=100,
                         seed=1, likelihood_type='chi2', verbose=False,
-                        upsampling_factor=subsampling_factor)[0]
+                        upsampling_factor=upsampling_factor)[0]
 
     # Background tuning, fixing Moffat
     kwargs_fixed = {
@@ -104,12 +104,12 @@ def get_psf_stars(ra, dec, workdir, survey='legacysurvey'):
     if len(goodstars[0]) < 1:
         raise RuntimeError("Really cannot find stars around {(ra, dec)} ...")
 
-    cutoutpath = download_legacy_survey_cutout(ra, dec, fieldsize, downloaddir=workdir)
+    cutoutpath = get_cutouts_file(ra, dec, fieldsize, downloaddir=workdir, survey=survey)
 
     cutouts = {}
-    names = 'abcde'
+    names = 'abcde'  # no need for more than 5 stars, eva'
     for rastar, decstar, name in zip(*goodstars, names):
-        cutouts[name] = extract_stamps(cutoutpath, rastar, decstar, cutout_size=10)
+        cutouts[name] = extract_stamps(cutoutpath, rastar, decstar, survey, cutout_size=10)
 
     # cutouts: for each star, we have a dictionary of bands, the values of which are tuples
     # (star for each image, noisemap for each image)
@@ -135,4 +135,4 @@ def get_psf_stars(ra, dec, workdir, survey='legacysurvey'):
 if __name__ == "__main__":
 
     RA, DEC = 320.6075, -16.357
-    cutoutsi = get_psf_stars(RA, DEC, workdir='/tmp')
+    cutoutsi = get_psf_stars(RA, DEC, workdir='/tmp', survey='panstarrs')

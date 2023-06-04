@@ -102,6 +102,9 @@ def download_panstarrs_cutout(ra, dec, size, downloaddir=None, filename=None, ve
     downloaddir.mkdir(exist_ok=True)
 
     savepath = downloaddir / filename
+    if savepath.exists():
+        print('Already downloaded at', savepath)
+        return savepath
 
     parsed_request = parse_requests(url)
     parsed_request_filtered = []
@@ -134,6 +137,7 @@ def download_panstarrs_cutout(ra, dec, size, downloaddir=None, filename=None, ve
         print(f"######## Download completed, took {time() - t0:.0f} seconds to complete.")
     outfiles = sum(outfiles, [])
     combine_fits(outfiles, savepath)
+    return savepath
 
 
 def combine_fits(filelist, savepath):
