@@ -161,6 +161,8 @@ def combine_fits(filelist, savepath):
             print(f'PROBLEM WITH BAND {band}: {e}. SKIPPING!')
             continue
         hdulist.append(hduim[0])
+        # ah, by the way, Pan-STARRS noise maps are variance maps.
+        hduw[0].data = hduw[0].data**0.5
         hdulist.append(hduw[0])
 
         hduim.close()

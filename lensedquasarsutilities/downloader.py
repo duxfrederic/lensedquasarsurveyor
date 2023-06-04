@@ -15,10 +15,9 @@ def get_cutouts_file(ra, dec, size, survey, downloaddir=None, filename=None, ver
     THE HDUS NEED TO CONTAIN SOME WCS INFORMATION SO THE STAMP EXTRACTION CAN WORK
 
 
-
-    :param ra: degrees
-    :param dec: degrees
-    :param size: arcsec
+    :param ra: float, degrees
+    :param dec: float, degrees
+    :param size: float, arcsec
     :param survey: 'legacysurvey' or 'panstarrs' or ..........
     :param downloaddir: string, where to put the data
     :param filename: optional, give a special name to the resulting fits file

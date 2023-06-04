@@ -33,7 +33,7 @@ def extract_stamps(cutoutfile, ra, dec, survey, cutout_size=10):
                 wcs = WCS(hdulist[i].header)
                 datas.append(Cutout2D(hdulist[i].data, coord, cutout_size, wcs=wcs, mode='partial').data)
                 noises.append(Cutout2D(hdulist[i+1].data, coord, cutout_size, wcs=wcs, mode='partial').data)
-        print(np.shape(datas), np.shape(noises))
+
         cutouts[band] = (np.array(datas), np.array(noises))
 
     return cutouts
