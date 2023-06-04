@@ -50,7 +50,7 @@ def estimate_psf_from_extracted_h5(h5filepath):
     """
 
     dic = load_dict_from_hdf5(h5filepath)
-    for band, banddata in dic.items():
+    for band, banddata in dic['stars'].items():
 
         for imageindex, objects in banddata.items():
             stars = objects['stars']
@@ -97,14 +97,15 @@ def estimate_psf_from_extracted_h5(h5filepath):
             ############################################################################################################
 
 
-def estimate_psf(stars, sigma_2, masks, upsampling_factor=2):
+def estimate_psf(stars, sigma_2, masks, upsampling_factor=2, debug=False):
     """
     Final step once we have the data, the right stars and their cutouts and noise maps, and potentially masks.
 
     :param stars:  3D array, shape (N, nx, ny) where N is the number of star cutouts, and nx, ny the cutout dimensions
     :param sigma_2: same as `stars`, but for the noisemap (squared).
     :param masks: same as `stars` if applicable, masks to apply to the field. default: None
-    :param upsampling_factor: pixel size of PSF model / pixel size of image. Default: 2
+    :param upsampling_factor: int, pixel size of PSF model / pixel size of image. Default: 2
+    :param debug: bool, shows some plots of the stars before they are swallowed by the starred machinery.
     :return: 2D numpy array of the PSF of the field, model of the given stars with the obtained PSF, loss history
     """
     # let's scale our data!
@@ -139,19 +140,15 @@ def estimate_psf(stars, sigma_2, masks, upsampling_factor=2):
     # find a typical low positive value
     typical_low = np.nanpercentile(sigma_2[sigma_2 > 0.], 0.5)
     sigma_2[sigma_2 < typical_low] = typical_low
-    if len(sigma_2) > 1:
+    if debug:
         fig, axs = plt.subplots(2, stars.shape[0])
         for i in range(stars.shape[0]):
-            axs[0, i].imshow(stars[i])
-            axs[1, i].imshow(sigma_2[i])
-            print(np.min(sigma_2[i]))
-        plt.show()
-    else:
-        fig, axs = plt.subplots(2, stars.shape[0])
-        for i in range(stars.shape[0]):
-            axs[0].imshow(stars[i])
-            axs[1].imshow(sigma_2[i])
-            print(np.min(sigma_2[i]))
+            if stars.shape[0] > 1:
+                axs[0, i].imshow(stars[i])
+                axs[1, i].imshow(sigma_2[i])
+            else:
+                axs[0].imshow(stars[i])
+                axs[1].imshow(sigma_2[i])
         plt.show()
 
     # save a copy of noise:
@@ -225,12 +222,6 @@ def estimate_psf(stars, sigma_2, masks, upsampling_factor=2):
 
     kwargs_final = parameters.args2kwargs(best_fit)
 
-    # not forgetting to convolve with a gaussian of fwhm 2.0
-    # sigma = 2.0 / 2.355  # convert fwhm to sigma.
-    # return gaussian_filter(model.get_narrow_psf(**kwargs_final, norm=True), sigma)
-    # ACTUALLY, let's return the narrow PSF: our model fitting will start from gaussians of 2 pics,
-    # which might make it easier to handle multiple filters or epochs.
-
     ###########################################################################################
     # book keeping
     narrowpsf = model.get_narrow_psf(**kwargs_final, norm=True)
@@ -290,18 +281,50 @@ def download_and_extract(ra, dec, workdir, survey='legacysurvey'):
 
     # extracting the cutouts
     cutouts = {}
-    names = 'abcde'  # no need for more than 5 stars, eva'
+    names = 'abcde'  # no need for more than 5 stars, evah
     for rastar, decstar, name in zip(*goodstars, names):
         cutouts[name] = extract_stamps(savepath_fits, rastar, decstar, survey, cutout_size=4)
 
     # also, let's get the lens!
     cutoutslens = extract_stamps(savepath_fits, ra, dec, survey, cutout_size=8)
-    # todo deal with the lens, let's see once we have the PSF
 
     # cutouts: for each star, we have a dictionary of bands, the values of which are tuples
     # (star for each image, noisemap for each image)
     # we need to transform that into
     # {'band1': { 'image1': {'band1': np.array(star1,star2,...), np.array(noisemap1,noisemap2...)} ...}
+    transformed_cutoutslens = {}
+
+    # first, the lens
+    for band, (array1, array2) in cutoutslens.items():
+        image_count = array1.shape[0]
+
+        if band not in transformed_cutoutslens:
+            transformed_cutoutslens[band] = {}
+
+        for i in range(image_count):
+            key = str(i)
+            data = array1[i]
+            noise = array2[i]
+            if key not in transformed_cutoutslens[band]:
+                transformed_cutoutslens[band][key] = {}
+
+            if 'data' not in transformed_cutoutslens[band][key]:
+                transformed_cutoutslens[band][key]['data'] = [data]
+            else:
+                transformed_cutoutslens[band][key]['data'].append(data)
+            if 'noise' not in transformed_cutoutslens[band][key]:
+                transformed_cutoutslens[band][key]['noise'] = [noise]
+            else:
+                transformed_cutoutslens[band][key]['noise'].append(noise)
+
+    # once this is done, go back through each band, image and type of data to
+    # make them numpy arrays ...sigh
+    for band, banddata in transformed_cutoutslens.items():
+        for imageindex, objects in banddata.items():
+            for key, array in objects.items():
+                objects[key] = np.array(array)
+
+    # next, the stars.
     transformed_cutouts = {}
 
     for star, bands in cutouts.items():
@@ -336,7 +359,8 @@ def download_and_extract(ra, dec, workdir, survey='legacysurvey'):
 
     # amazing, let's save it!
     # return transformed_cutouts
-    save_dict_to_hdf5(savepath_cutouts, transformed_cutouts)
+    overall = {'stars': transformed_cutouts, 'lens': transformed_cutoutslens}
+    save_dict_to_hdf5(savepath_cutouts, overall)
     return savepath_fits, savepath_cutouts
 
 
