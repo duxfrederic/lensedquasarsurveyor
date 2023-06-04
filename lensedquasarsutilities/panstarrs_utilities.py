@@ -1,9 +1,6 @@
 import urllib3
 import shutil
-
-
 from pathlib import Path
-import glob
 from astropy.io import fits
 
 from time import time
@@ -82,9 +79,9 @@ def download_panstarrs_cutout(ra, dec, size, downloaddir=None, filename=None, ve
         downloads all the available panstarrs data that satisfies the requirements
         given in the parameters.
 
-        :param ra: degrees
-        :param dec: degrees
-        :param size: arcsec
+        :param ra: float: degrees
+        :param dec: float: degrees
+        :param size: float: arcseconds, desired size of the cutout.
         :param downloaddir: string, where to put the data: Default: None
         :param filename: optional, give a special name to the resulting fits file. Default: None
         :param verbose: display some messages? Default: False
@@ -177,5 +174,3 @@ if __name__ == "__main__":
     hsize = 100
     woutdir = '/tmp/'
     download_panstarrs_cutout(RA, DEC, hsize, woutdir)
-
-
