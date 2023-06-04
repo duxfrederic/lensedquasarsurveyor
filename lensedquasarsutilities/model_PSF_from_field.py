@@ -51,16 +51,23 @@ def estimate_psf_from_extracted_h5(h5filepath):
 
     dic = load_dict_from_hdf5(h5filepath)
     for band, banddata in dic.items():
+
         for imageindex, objects in banddata.items():
             stars = objects['stars']
             noisemaps = objects['noise']
             hsize = stars.shape[1]
-            masks = create_round_mask(hsize, 0.4*hsize)  # yeaaaaaaah I don't want to deal with masking yet.
+            masks = create_round_mask(hsize, 0.5*hsize)  # yeaaaaaaah I don't want to deal with masking yet.
             masks = np.repeat(masks[np.newaxis, ...], stars.shape[0], axis=0)
+            try:
+                # we overwrite stars and sigma_2 because the routine might have eliminated some of them.
+                narrowpsf, fullmodel, stars, sigma_2, loss_history = estimate_psf(stars, noisemaps**2, masks,
+                                                                                  upsampling_factor=2)
+                noisemaps = sigma_2**0.5
 
-            narrowpsf, fullmodel, loss_history = estimate_psf(stars, noisemaps**2, masks, upsampling_factor=2)
-            # store the estimated PSF in the hdf5 file.
-            update_hdf5(h5filepath, f"{band}/{imageindex}/psf", narrowpsf)
+                # store the estimated PSF in the hdf5 file.
+                update_hdf5(h5filepath, f"{band}/{imageindex}/psf", narrowpsf)
+            except RuntimeError as E:
+                print(E)
 
             ############################################################################################################
             # plot!
@@ -105,10 +112,51 @@ def estimate_psf(stars, sigma_2, masks, upsampling_factor=2):
     stars /= scale
     sigma_2 /= scale**2
 
+    # filter images with no data
+    stars_filtered, noise2_filtered, mask_filtered = [], [], []
+    for i in range(stars.shape[0]):
+        star, noise2, mask = stars[i], sigma_2[i], masks[i]
+        if np.nanstd(star) < 1e-10 or np.isnan(np.nanstd(star)):
+            # yeaaah probably no data in here
+            continue
+        stars_filtered.append(star)
+        noise2_filtered.append(noise2)
+        mask_filtered.append(mask)
+
+    if not stars_filtered:
+        # no data in here!
+        raise RuntimeError("No data!!!")
+    stars = np.array(stars_filtered)
+    sigma_2 = np.array(noise2_filtered)
+
+    # also, filter out nans...
+    max_real_value = np.nanmax(sigma_2[sigma_2 != np.inf])
+    replacement_value = 10 * max_real_value
+    sigma_2[np.isnan(sigma_2)] = replacement_value
+    # and infs ...
+    sigma_2[np.isinf(sigma_2)] = replacement_value
+    # and negative values!!
+    # find a typical low positive value
+    typical_low = np.nanpercentile(sigma_2[sigma_2 > 0.], 0.5)
+    sigma_2[sigma_2 < typical_low] = typical_low
+    if len(sigma_2) > 1:
+        fig, axs = plt.subplots(2, stars.shape[0])
+        for i in range(stars.shape[0]):
+            axs[0, i].imshow(stars[i])
+            axs[1, i].imshow(sigma_2[i])
+            print(np.min(sigma_2[i]))
+        plt.show()
+    else:
+        fig, axs = plt.subplots(2, stars.shape[0])
+        for i in range(stars.shape[0]):
+            axs[0].imshow(stars[i])
+            axs[1].imshow(sigma_2[i])
+            print(np.min(sigma_2[i]))
+        plt.show()
+
     # save a copy of noise:
     noise_for_W = np.sqrt(sigma_2.copy())
-    # mask:
-    # sigma_2[masks] = 1e15
+
     N = stars.shape[0]
     image_size = stars[0].shape[0]
 
@@ -189,7 +237,7 @@ def estimate_psf(stars, sigma_2, masks, upsampling_factor=2):
     fullmodel = np.array([model.model(i, **kwargs_final) for i in range(stars.shape[0])])
     ###########################################################################################
 
-    return narrowpsf, fullmodel, L1 + optim.loss_history
+    return narrowpsf, fullmodel, stars, sigma_2, L1 + optim.loss_history
 
 
 def download_and_extract(ra, dec, workdir, survey='legacysurvey'):
@@ -244,10 +292,10 @@ def download_and_extract(ra, dec, workdir, survey='legacysurvey'):
     cutouts = {}
     names = 'abcde'  # no need for more than 5 stars, eva'
     for rastar, decstar, name in zip(*goodstars, names):
-        cutouts[name] = extract_stamps(savepath_fits, rastar, decstar, survey, cutout_size=10)
-        print(name)
+        cutouts[name] = extract_stamps(savepath_fits, rastar, decstar, survey, cutout_size=4)
+
     # also, let's get the lens!
-    cutoutslens = extract_stamps(savepath_fits, ra, dec, survey, cutout_size=10)
+    cutoutslens = extract_stamps(savepath_fits, ra, dec, survey, cutout_size=8)
     # todo deal with the lens, let's see once we have the PSF
 
     # cutouts: for each star, we have a dictionary of bands, the values of which are tuples
@@ -294,5 +342,8 @@ def download_and_extract(ra, dec, workdir, survey='legacysurvey'):
 
 if __name__ == "__main__":
     RA, DEC = 320.6075, -16.357
-    ff = download_and_extract(RA, DEC, workdir='/tmp', survey='panstarrs')
+    RA, DEC = 89.3979, -29.9933
+    RA, DEC = 137.4946, -7.8179
+
+    ff = download_and_extract(RA, DEC, workdir='/tmp/wow/', survey='legacysurvey')
     estimate_psf_from_extracted_h5(ff[1])

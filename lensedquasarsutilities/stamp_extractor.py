@@ -8,7 +8,7 @@ from astropy.coordinates import SkyCoord
 from lensedquasarsutilities.config import band_header_keyword
 
 
-def extract_stamps(cutoutfile, ra, dec, survey, cutout_size=10):
+def extract_stamps(cutoutfile, ra, dec, survey, cutout_size=6):
     """
 
     :param cutoutfile: string or path object
@@ -33,8 +33,12 @@ def extract_stamps(cutoutfile, ra, dec, survey, cutout_size=10):
                 wcs = WCS(hdulist[i].header)
                 datas.append(Cutout2D(hdulist[i].data, coord, cutout_size, wcs=wcs, mode='partial').data)
                 noises.append(Cutout2D(hdulist[i+1].data, coord, cutout_size, wcs=wcs, mode='partial').data)
-
-        cutouts[band] = (np.array(datas), np.array(noises))
+        datas, noises = np.array(datas), np.array(noises)
+        # sometimes the surveys will give us a weird floating point number, big endian type or stuff.
+        # we don't want that.
+        datas = datas.astype(np.float32)
+        noises = noises.astype(np.float32)
+        cutouts[band] = (datas, noises)
 
     return cutouts
 

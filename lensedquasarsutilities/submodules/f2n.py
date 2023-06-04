@@ -191,9 +191,7 @@ class f2nimage:
 
             if z2 == "auto":
                 # Here we want to reject a percentage of high values...
-                sortedstatsel = np.sort(statsel)
-                n = round(0.9995 * statsel.size)
-                self.z2 = sortedstatsel[int(n)]
+                self.z2 = np.nanpercentile(statsel, 99.95)
                 if self.verbose:
                     print(("Setting auto z2 to %f" % self.z2))
 
