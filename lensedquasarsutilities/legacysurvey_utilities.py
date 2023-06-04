@@ -38,6 +38,7 @@ def download_legacy_survey_cutout(ra, dec, size, downloaddir=None, filename=None
         print('downloading from', url)
 
     downloaddir = Path(downloaddir)
+    downloaddir.mkdir(exist_ok=True)
 
     savepath = downloaddir / filename
     if savepath.exists():

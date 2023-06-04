@@ -1,6 +1,7 @@
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 
+
 def get_J2000_name(ra_deg, dec_deg, N=4):
     """    
     Formatter converting coordinates to a name.
@@ -13,7 +14,6 @@ def get_J2000_name(ra_deg, dec_deg, N=4):
         name: string, the formatted name.
 
     """
-
 
     coord = SkyCoord(ra=ra_deg * u.deg, dec=dec_deg * u.deg)
 
