@@ -27,18 +27,27 @@ def extract_stamps(cutoutfile, ra, dec, survey, cutout_size=6):
     bands = set([hdulist[i].header[kwfilter] for i in range(1, len(hdulist), 2)])
     cutouts = {}
     for band in bands:
-        datas, noises = [], []
+        datas, noises, wcs_headers = [], [], []
         for i in range(1, len(hdulist), 2):
             if hdulist[i].header[kwfilter] == hdulist[i+1].header[kwfilter] == band:
                 wcs = WCS(hdulist[i].header)
-                datas.append(Cutout2D(hdulist[i].data, coord, cutout_size, wcs=wcs, mode='partial').data)
-                noises.append(Cutout2D(hdulist[i+1].data, coord, cutout_size, wcs=wcs, mode='partial').data)
+                datacutout = Cutout2D(hdulist[i].data, coord, cutout_size, wcs=wcs, mode='partial')
+                noisecutout = Cutout2D(hdulist[i+1].data, coord, cutout_size, wcs=wcs, mode='partial')
+                datas.append(datacutout.data)
+                noises.append(noisecutout.data)
+
+                # let's also carry the WCS of the cutouts, will be useful for the intial guess of
+                # the positions of the lensed images later.
+                wcs_header = datacutout.wcs.to_header()
+                wcs_header_string = wcs_header.tostring()
+                wcs_headers.append(wcs_header_string)
+
         datas, noises = np.array(datas), np.array(noises)
         # sometimes the surveys will give us a weird floating point number, big endian type or stuff.
         # we don't want that.
         datas = datas.astype(np.float32)
         noises = noises.astype(np.float32)
-        cutouts[band] = (datas, noises)
+        cutouts[band] = (datas, noises, wcs_headers)
 
     return cutouts
 

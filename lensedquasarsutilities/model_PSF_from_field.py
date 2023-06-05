@@ -25,7 +25,7 @@ from lensedquasarsutilities.plots import plot_psf
 
 
 def create_round_mask(size, radius):
-    # Create a grid of indices
+    # create a grid of indices
     x, y = np.indices((size, size))
 
     center = (size - 1) / 2
@@ -295,7 +295,7 @@ def download_and_extract(ra, dec, workdir, survey='legacysurvey'):
     transformed_cutoutslens = {}
 
     # first, the lens
-    for band, (array1, array2) in cutoutslens.items():
+    for band, (array1, array2, wcs_headers) in cutoutslens.items():
         image_count = array1.shape[0]
 
         if band not in transformed_cutoutslens:
@@ -305,6 +305,7 @@ def download_and_extract(ra, dec, workdir, survey='legacysurvey'):
             key = str(i)
             data = array1[i]
             noise = array2[i]
+            wcs_header = wcs_headers[i]
             if key not in transformed_cutoutslens[band]:
                 transformed_cutoutslens[band][key] = {}
 
@@ -316,19 +317,27 @@ def download_and_extract(ra, dec, workdir, survey='legacysurvey'):
                 transformed_cutoutslens[band][key]['noise'] = [noise]
             else:
                 transformed_cutoutslens[band][key]['noise'].append(noise)
+            if 'wcs_header' not in transformed_cutoutslens[band][key]:
+                transformed_cutoutslens[band][key]['wcs_header'] = [wcs_header]
+            else:
+                transformed_cutoutslens[band][key]['wcs_header'].append(wcs_header)
 
     # once this is done, go back through each band, image and type of data to
     # make them numpy arrays ...sigh
     for band, banddata in transformed_cutoutslens.items():
         for imageindex, objects in banddata.items():
             for key, array in objects.items():
-                objects[key] = np.array(array)
+                if key == 'wcs_header':
+                    objects[key] = np.array(array, dtype='S')
+                else:
+                    objects[key] = np.array(array)
 
     # next, the stars.
     transformed_cutouts = {}
 
     for star, bands in cutouts.items():
-        for band, (array1, array2) in bands.items():
+        # discard wcs:
+        for band, (array1, array2, _) in bands.items():
             image_count = array1.shape[0]
 
             if band not in transformed_cutouts:
@@ -370,4 +379,4 @@ if __name__ == "__main__":
     RA, DEC = 137.4946, -7.8179
 
     ff = download_and_extract(RA, DEC, workdir='/tmp/wow/', survey='legacysurvey')
-    estimate_psf_from_extracted_h5(ff[1])
+    #estimate_psf_from_extracted_h5(ff[1])

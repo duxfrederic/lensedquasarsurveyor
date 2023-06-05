@@ -6,6 +6,7 @@ import jax.numpy as jnp
 from jax import random
 import numpyro
 import numpyro.distributions as dist
+import numpy as np
 
 from starred.utils.generic_utils import pad_and_convolve_fft, Downsample
 
@@ -17,11 +18,16 @@ class SimpleLensedQuasarModel:
 
         self.data = data
         self.noisemap = noisemap
-        self.psf = narrowpsf
+
         self.upsampling_factor = upsampling_factor
         self.pixel_size = pixel_size
 
         Nx, Ny = shape
+        Nx, Ny = upsampling_factor*Nx, upsampling_factor*Ny
+        nx, ny = narrowpsf.shape
+
+        padx, pady = int((Nx - nx) / 2), int((Ny - ny) / 2)
+        self.psf = jnp.pad(narrowpsf, ((padx, padx), (pady, pady)), constant_values=0.)
 
         x, y = np.arange(-Ny//2, Ny//2), np.arange(-Nx//2, Nx//2)
         self.X, self.Y = np.meshgrid(x, y)
@@ -69,18 +75,18 @@ class SimpleLensedQuasarModel:
     def residuals_with_galaxy(self, params):
         model = self.create_model_with_galaxy(*params)
         model = self.down_resolution(model)
-        return ((model - data) / noisemap).flatten()
+        return ((model - self.data) / self.noisemap).flatten()
 
     @partial(jit, static_argnums=(0,))
     def residuals_no_galaxy(self, params):
         model = self.create_model_no_galaxy(*params)
         model = self.down_resolution(model)
-        return ((model - data) / noisemap).flatten()
+        return ((model - self.data) / self.noisemap).flatten()
 
     def reduced_chi2_no_galaxy(self, params):
         residuals = self.residuals_no_galaxy(params)
         chi_squared = np.sum(residuals ** 2)
-        dof = data.size - len(params)
+        dof = self.data.size - len(params)
 
         reduced_chi_squared = chi_squared / dof
         return reduced_chi_squared
@@ -88,7 +94,7 @@ class SimpleLensedQuasarModel:
     def reduced_chi2_with_galaxy(self, params):
         residuals = self.residuals_with_galaxy(params)
         chi_squared = np.sum(residuals ** 2)
-        dof = data.size - len(params)
+        dof = self.data.size - len(params)
 
         reduced_chi_squared = chi_squared / dof
         return reduced_chi_squared
@@ -97,16 +103,16 @@ class SimpleLensedQuasarModel:
         res = least_squares(self.residuals_no_galaxy, initial_guess)
         return res.x
 
-    def optimize_no_galaxy(self, initial_guess):
+    def optimize_with_galaxy(self, initial_guess):
         res = least_squares(self.residuals_with_galaxy, initial_guess)
         return res.x
 
-    def sample_with_galaxy(self, starting_point):
+    def sample_with_galaxy(self, starting_point, num_warmup=100, num_samples=200):
 
-        def model(params):
+        def numpyromodel(data, noise, params):
             # Flatten the images
-            image_data_flat = self.data.flatten()
-            image_uncertainties_flat = self.noisemap.flatten()
+            image_data_flat = data.flatten()
+            image_uncertainties_flat = noise.flatten()
             # this basically allows us to use the numypro.plate context manager
             # below. Not very useful here, but indicates that each pixel
             # is independant. Some samplers can take advantage of this,
@@ -143,18 +149,19 @@ class SimpleLensedQuasarModel:
                 numpyro.sample('obs', dist.Normal(mod.flatten(), image_uncertainties_flat), obs=image_data_flat)
 
         # run MCMC
-        nuts_kernel = numpyro.infer.NUTS(model)
-        mcmc = numpyro.infer.MCMC(nuts_kernel, num_warmup=300, num_samples=600)
+        nuts_kernel = numpyro.infer.NUTS(numpyromodel)
+        mcmc = numpyro.infer.MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples)
         rng_key = random.PRNGKey(0)
-        mcmc.run(rng_key, data, noisemap, starting_point)
+        mcmc.run(rng_key, self.data, self.noisemap, starting_point)
         mcmc.print_summary()
+        return mcmc
 
-    def sample_no_galaxy(self, starting_point):
+    def sample_no_galaxy(self, starting_point, num_warmup=100, num_samples=200):
 
-        def model(params):
+        def numpyromodel(data, noise, params):
             # Flatten the images
-            image_data_flat = self.data.flatten()
-            image_uncertainties_flat = self.noisemap.flatten()
+            image_data_flat = data.flatten()
+            image_uncertainties_flat = noise.flatten()
             # this basically allows us to use the numypro.plate context manager
             # below. Not very useful here, but indicates that each pixel
             # is independant. Some samplers can take advantage of this,
@@ -182,34 +189,35 @@ class SimpleLensedQuasarModel:
                 numpyro.sample('obs', dist.Normal(mod.flatten(), image_uncertainties_flat), obs=image_data_flat)
 
         # run MCMC
-        nuts_kernel = numpyro.infer.NUTS(model)
-        mcmc = numpyro.infer.MCMC(nuts_kernel, num_warmup=300, num_samples=600)
+        nuts_kernel = numpyro.infer.NUTS(numpyromodel)
+        mcmc = numpyro.infer.MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples)
         rng_key = random.PRNGKey(0)
-        mcmc.run(rng_key, data, noisemap, starting_point)
+        mcmc.run(rng_key, self.data, self.noisemap, starting_point)
         mcmc.print_summary()
+        return mcmc
 
 
 if __name__ == '__main__':
-    import numpy as np
-    import matplotlib.pyplot as plt
+    pass
+    # import matplotlib.pyplot as plt
 
-    psf = lambda x, y, x0, y0, A: A * np.exp(-0.2 * (x - x0)**2 - 0.17 * (y - y0)**2)
-
-    # grid of small pixels
-    X, Y = x, y = np.meshgrid(np.linspace(-32, 32, 128), np.linspace(-32, 32, 128))
-
-    narrow_psf = psf(x, y, 0, 0, 1)
-    narrow_psf /= narrow_psf.sum()
-    modc = SimpleLensedQuasarModel(X, X, psf(X, Y, 0, 0, 1), 2)
-    m = modc.create_model_with_galaxy(0, 10, 1, 0, -10, 1.5, 0, 0, 0.01, 5.0, 1.5, 0.5, 30)
-
-    noise_scale = 0.0015
-    data = modc.down_resolution(m)
-    data += np.random.normal(loc=0, scale=noise_scale, size=data.shape)
-    plt.imshow(data)
-    noisemap = noise_scale * np.ones_like(data)
-    modc.data = data
-    modc.noisemap = noisemap
-
-    plt.show()
+    # psf = lambda x, y, x0, y0, A: A * np.exp(-0.2 * (x - x0)**2 - 0.17 * (y - y0)**2)
+    #
+    # # grid of small pixels
+    # X, Y = x, y = np.meshgrid(np.linspace(-32, 32, 128), np.linspace(-32, 32, 128))
+    #
+    # narrow_psf = psf(x, y, 0, 0, 1)
+    # narrow_psf /= narrow_psf.sum()
+    # modc = SimpleLensedQuasarModel(X, X, psf(X, Y, 0, 0, 1), 2)
+    # m = modc.create_model_with_galaxy(0, 10, 1, 0, -10, 1.5, 0, 0, 0.01, 5.0, 1.5, 0.5, 30)
+    #
+    # noise_scale = 0.0015
+    # data = modc.down_resolution(m)
+    # data += np.random.normal(loc=0, scale=noise_scale, size=data.shape)
+    # plt.imshow(data)
+    # noisemap = noise_scale * np.ones_like(data)
+    # modc.data = data
+    # modc.noisemap = noisemap
+    #
+    # plt.show()
 
