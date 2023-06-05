@@ -1,9 +1,11 @@
 from scipy.optimize import least_squares
+from scipy.ndimage import gaussian_filter
 from jax.scipy.stats import norm
 from jax import jit
 from functools import partial
 import jax.numpy as jnp
 from jax import random
+from jax.image import scale_and_translate
 import numpyro
 import numpyro.distributions as dist
 import numpy as np
@@ -20,7 +22,7 @@ from lensedquasarsutilities.io import load_dict_from_hdf5
 from lensedquasarsutilities.gaia_utilities import find_gaia_stars_around_coords
 
 
-def prepare_simple_lens_model_from_h5(h5file, imagecoords=None, debug=False):
+def prepare_simple_lens_model_from_h5(h5file, imagecoords=None, debug=False, modeltype='simple'):
     """
 
     :param h5file: string or Path, path to an h5-file containing cutouts with WCS, PSFs, as prepared by
@@ -70,13 +72,17 @@ def prepare_simple_lens_model_from_h5(h5file, imagecoords=None, debug=False):
         upsampling_factor = data[band]['0']['psf_supersampling_factor']
 
         # messy part, go to supersampled model coordinates (smaller pixels, origin at the center instead of corner)
-        sf = upsampling_factor
-        offset = (sf * lens.shape[1] - 1) / 2.
-
-        x1m, y1m = sf * x1 - offset, sf * y1 - offset
-        x2m, y2m = sf * x2 - offset, sf * y2 - offset
-        xgm, ygm = sf * xg - offset, sf * yg - offset
-
+        if modeltype == 'mcs':
+            sf = upsampling_factor
+            offset = (sf * lens.shape[1] - 1) / 2.
+            x1m, y1m = sf * x1 - offset, sf * y1 - offset
+            x2m, y2m = sf * x2 - offset, sf * y2 - offset
+            xgm, ygm = sf * xg - offset, sf * yg - offset
+        elif modeltype == 'simple':
+            offset = (lens.shape[1] - 1) / 2.
+            x1m, y1m = x1 - offset, y1 - offset
+            x2m, y2m = x2 - offset, y2 - offset
+            xgm, ygm = xg - offset, yg - offset
         # point source initial guess
         A = 100*np.nanpercentile(lens, 99.5)
         ps_ini = [x1m, y1m, A, x2m, y2m, A]
@@ -96,8 +102,7 @@ def prepare_simple_lens_model_from_h5(h5file, imagecoords=None, debug=False):
             model = models[band]
             cdata = data['lens'][band]['0']['data']
             i0 = axs[0, i].imshow(cdata, origin='lower')
-            mod = model.create_model_with_galaxy(*model.initial_guess_with_galaxy)
-            mod = model.down_resolution(mod)
+            mod = model.model_with_galaxy(model.initial_guess_with_galaxy)
             i1 = axs[1, i].imshow(mod, origin='lower')
             i2 = axs[2, i].imshow(cdata - mod, origin='lower')
             axs[0, i].set_title(f'{band}')
@@ -120,23 +125,61 @@ def prepare_simple_lens_model_from_h5(h5file, imagecoords=None, debug=False):
 
 class SimpleLensedQuasarModel:
     def __init__(self, data, noisemap, narrowpsf, upsampling_factor,
-                 initial_guess_no_galaxy, initial_guess_with_galaxy, wcs=None,):
+                 initial_guess_no_galaxy, initial_guess_with_galaxy, wcs=None,
+                 modeltype='simple'):
+        """
+
+        :param data: 2D np array
+        :param noisemap: 2D np array
+        :param narrowpsf: 2D np array
+        :param upsampling_factor: int
+        :param initial_guess_no_galaxy: list
+        :param initial_guess_with_galaxy: list
+        :param wcs: astropy WCS object
+        :param modeltype: string, either 'simple' or 'mcs'. with 'simple', we just interpolate and scale the PSFs
+                          onto the grid. With 'mcs', we interpolate 2D gaussians and sersics onto a finer grid
+                          (PSF resolution), then convolve with the PSF and downsample to the image resolution.
+
+        """
+
 
         shape = data.shape
         assert shape == noisemap.shape
 
+        # here we scale!!
+        scale = np.nanpercentile(data, 99.9)
+        data /= scale
+        noisemap /= scale
+
+        self.scale = scale
         self.data = data
         self.noisemap = noisemap
 
         self.upsampling_factor = upsampling_factor
         self.wcs = wcs
 
-        Nx, Ny = shape
-        Nx, Ny = upsampling_factor*Nx, upsampling_factor*Ny
-        nx, ny = narrowpsf.shape
+        self.modeltype = modeltype
 
-        padx, pady = int((Nx - nx) / 2), int((Ny - ny) / 2)
-        self.psf = jnp.pad(narrowpsf, ((padx, padx), (pady, pady)), constant_values=0.)
+        if modeltype == 'mcs':
+            self.model_no_galaxy = self.model_no_galaxy_mcs
+            self.model_with_galaxy = self.model_with_galaxy_mcs
+
+        elif modeltype == 'simple':
+            self.model_no_galaxy = self.model_no_galaxy_simple
+            self.model_with_galaxy = self.model_with_galaxy_simple
+
+        else:
+            raise AssertionError('modeltype is either mcs or simple')
+
+        Nx, Ny = shape
+
+        nx, ny = narrowpsf.shape
+        if modeltype == 'mcs':
+            Nx, Ny = upsampling_factor * Nx, upsampling_factor * Ny
+            padx, pady = int((Nx - nx) / 2), int((Ny - ny) / 2)
+            self.psf = jnp.pad(narrowpsf, ((padx, padx), (pady, pady)), constant_values=0.)
+        elif modeltype == 'simple':
+            self.psf = gaussian_filter(narrowpsf, 0.85)  # narrow psf --> psf by convolving with gaussian kernel fwhm=2
 
         x, y = np.arange(-Ny//2, Ny//2), np.arange(-Nx//2, Nx//2)
         self.X, self.Y = np.meshgrid(x, y)
@@ -145,6 +188,8 @@ class SimpleLensedQuasarModel:
         self.initial_guess_with_galaxy = initial_guess_with_galaxy
         self.param_optim_with_galaxy = None
         self.param_optim_no_galaxy = None
+        self.param_mediansampler_no_galaxy = None
+        self.param_mediansampler_with_galaxy = None
 
     @partial(jit, static_argnums=(0,))
     def elliptical_sersic_profile(self, I_e, r_e, n, x0, y0, ellip, theta):
@@ -165,7 +210,22 @@ class SimpleLensedQuasarModel:
         g = A * norm.pdf(self.X, loc=x0, scale=0.85) * norm.pdf(self.Y, loc=y0, scale=0.85)
         return g
 
-    def create_model_no_galaxy(self, x1, y1, A1, x2, y2, A2):
+    def translate_and_scale_psf(self, dx, dy, amplitude):
+        outshape = self.X.shape
+        supersampling = self.upsampling_factor
+        scale = jnp.array((1. / supersampling, 1. / supersampling))
+        inishape = self.psf.shape[0]
+        # assuming square psf
+        outoffset = (inishape / 2.) / supersampling
+        outoffsetx = outoffset + (outshape[0] - inishape) / supersampling
+        outoffsety = outoffset + (outshape[1] - inishape) / supersampling
+
+        # assuming
+        translation = jnp.array((dy + outoffsetx, dx + outoffsety))
+        out = scale_and_translate(self.psf, outshape, (0, 1), scale, translation, method='bicubic')
+        return amplitude * out
+
+    def _create_model_no_galaxy(self, x1, y1, A1, x2, y2, A2):
         psf1 = self.gaussian_psf(x1, y1, A1)
         psf2 = self.gaussian_psf(x2, y2, A2)
 
@@ -173,8 +233,8 @@ class SimpleLensedQuasarModel:
 
         return model
 
-    def create_model_with_galaxy(self, x1, y1, A1, x2, y2, A2, xg, yg, I_e, r_e, n, ellip, theta):
-        psfs = self.create_model_no_galaxy(x1, y1, A1, x2, y2, A2)
+    def _create_model_with_galaxy(self, x1, y1, A1, x2, y2, A2, xg, yg, I_e, r_e, n, ellip, theta):
+        psfs = self._create_model_no_galaxy(x1, y1, A1, x2, y2, A2)
 
         sersic = self.elliptical_sersic_profile(I_e, r_e, n, xg, yg, ellip, theta)
 
@@ -185,16 +245,33 @@ class SimpleLensedQuasarModel:
     def down_resolution(self, model):
         return Downsample(pad_and_convolve_fft(model, self.psf), self.upsampling_factor)
 
+    def model_no_galaxy_mcs(self, params):
+        _mod = self._create_model_no_galaxy(*params)
+        return self.down_resolution(_mod)
+
+    def model_with_galaxy_mcs(self, params):
+        _mod = self._create_model_with_galaxy(*params)
+        return self.down_resolution(_mod)
+
+    def model_no_galaxy_simple(self, params):
+        x1, y1, A1, x2, y2, A2 = params
+        mod = self.translate_and_scale_psf(x1, y1, A1)
+        mod += self.translate_and_scale_psf(x2, y2, A2)
+        return mod
+
+    def model_with_galaxy_simple(self, params):
+        x1, y1, A1, x2, y2, A2, xg, yg, I_e, r_e, n, ellip, theta = params
+        sersic = self.elliptical_sersic_profile(I_e, r_e, n, xg, yg, ellip, theta)
+        return self.model_no_galaxy_simple([x1, y1, A1, x2, y2, A2]) + sersic
+
     @partial(jit, static_argnums=(0,))
     def residuals_with_galaxy(self, params):
-        model = self.create_model_with_galaxy(*params)
-        model = self.down_resolution(model)
+        model = self.model_with_galaxy(params)
         return ((model - self.data) / self.noisemap).flatten()
 
     @partial(jit, static_argnums=(0,))
     def residuals_no_galaxy(self, params):
-        model = self.create_model_no_galaxy(*params)
-        model = self.down_resolution(model)
+        model = self.model_no_galaxy(params)
         return ((model - self.data) / self.noisemap).flatten()
 
     def reduced_chi2_no_galaxy(self, params):
@@ -227,9 +304,9 @@ class SimpleLensedQuasarModel:
         self.param_optim_with_galaxy = res.x
         return res.x
 
-    def sample_with_galaxy(self, starting_point, num_warmup=100, num_samples=200):
+    def sample_with_galaxy(self, num_warmup=100, num_samples=200, num_chains=1):
 
-        def numpyromodel(data, noise, params):
+        def numpyromodel(data, noise):
             # Flatten the images
             image_data_flat = data.flatten()
             image_uncertainties_flat = noise.flatten()
@@ -238,31 +315,28 @@ class SimpleLensedQuasarModel:
             # is independant. Some samplers can take advantage of this,
             # so let's do it this way.
 
-            # Unpack optimized parameters
-            x1_opt, y1_opt, A1_opt, x2_opt, y2_opt, A2_opt, xg_opt, yg_opt, \
-                I_e_opt, r_e_opt, n_opt, ellip_opt, theta_opt = params
+            sizey, sizex = data.shape
+            boundx, boundy = (sizex - 1.) / 2., (sizey - 1.) / 2.
 
-            bounds = 5
-            # Uniform priors centered around optimized parameters
-            x1 = numpyro.sample('x1', dist.Uniform(x1_opt - bounds, x1_opt + bounds))
-            y1 = numpyro.sample('y1', dist.Uniform(y1_opt - bounds, y1_opt + bounds))
-            A1 = numpyro.sample('A1', dist.Uniform(A1_opt - bounds, A1_opt + bounds))
+            # Uniform priors on the entire field.
+            x1 = numpyro.sample('x1', dist.Uniform(-boundx, boundx))
+            y1 = numpyro.sample('y1', dist.Uniform(-boundy, boundy))
+            A1 = numpyro.sample('A1', dist.Uniform(0., 20.))
 
-            x2 = numpyro.sample('x2', dist.Uniform(x2_opt - bounds, x2_opt + bounds))
-            y2 = numpyro.sample('y2', dist.Uniform(y2_opt - bounds, y2_opt + bounds))
-            A2 = numpyro.sample('A2', dist.Uniform(A2_opt - bounds, A2_opt + bounds))
+            x2 = numpyro.sample('x2', dist.Uniform(-boundx, boundx))
+            y2 = numpyro.sample('y2', dist.Uniform(-boundy, boundy))
+            A2 = numpyro.sample('A2', dist.Uniform(0., 20.))
 
-            xg = numpyro.sample('xg', dist.Uniform(xg_opt - bounds, xg_opt + bounds))
-            yg = numpyro.sample('yg', dist.Uniform(yg_opt - bounds, yg_opt + bounds))
-            I_e = numpyro.sample('I_e', dist.Uniform(0.1 * I_e_opt, 10 * I_e_opt))
-            r_e = numpyro.sample('r_e', dist.Uniform(0.1 * r_e_opt, 10 * r_e_opt))
+            xg = numpyro.sample('xg', dist.Uniform(-boundx, boundx))
+            yg = numpyro.sample('yg', dist.Uniform(-boundy, boundy))
+            I_e = numpyro.sample('I_e', dist.Uniform(0., 1.0))
+            r_e = numpyro.sample('r_e', dist.Uniform(0.1, 5.))
             n = numpyro.sample('n', dist.Uniform(0.5, 10))
             ellip = numpyro.sample('ellip', dist.Uniform(0, 0.99))
             theta = numpyro.sample('theta', dist.Uniform(0, 2 * np.pi))
 
             # Model
-            mod = self.create_model_with_galaxy(x1, y1, A1, x2, y2, A2, xg, yg, I_e, r_e, n, ellip, theta)
-            mod = self.down_resolution(mod)
+            mod = self.model_with_galaxy([x1, y1, A1, x2, y2, A2, xg, yg, I_e, r_e, n, ellip, theta])
 
             # likelihood, gaussian errors
             with numpyro.plate('data', len(image_data_flat)):
@@ -270,15 +344,18 @@ class SimpleLensedQuasarModel:
 
         # run MCMC
         nuts_kernel = numpyro.infer.NUTS(numpyromodel)
-        mcmc = numpyro.infer.MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples)
+        mcmc = numpyro.infer.MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains)
         rng_key = random.PRNGKey(0)
-        mcmc.run(rng_key, self.data, self.noisemap, starting_point)
+        mcmc.run(rng_key, self.data, self.noisemap)
         mcmc.print_summary()
+        keys = ['x1', 'y1', 'A', 'x2', 'y2', 'A2', 'xg', 'yg', 'I_e', 'r_e', 'n', 'ellip', 'theta']
+        medians = {k: np.median(val) for k, val in mcmc.get_samples().items()}
+        self.param_mediansampler_with_galaxy = [medians[k] for k in keys]
         return mcmc
 
-    def sample_no_galaxy(self, starting_point, num_warmup=100, num_samples=200):
+    def sample_no_galaxy(self, num_warmup=500, num_samples=500, num_chains=1):
 
-        def numpyromodel(data, noise, params):
+        def numpyromodel(data, noise):
             # Flatten the images
             image_data_flat = data.flatten()
             image_uncertainties_flat = noise.flatten()
@@ -287,22 +364,20 @@ class SimpleLensedQuasarModel:
             # is independant. Some samplers can take advantage of this,
             # so let's do it this way.
 
-            # Unpack optimized parameters
-            x1_opt, y1_opt, A1_opt, x2_opt, y2_opt, A2_opt = params
+            sizey, sizex = data.shape
+            boundx, boundy = (sizex - 1.) / 2., (sizey - 1.) / 2.
 
-            bounds = 5
-            # Uniform priors centered around optimized parameters
-            x1 = numpyro.sample('x1', dist.Uniform(x1_opt - bounds, x1_opt + bounds))
-            y1 = numpyro.sample('y1', dist.Uniform(y1_opt - bounds, y1_opt + bounds))
-            A1 = numpyro.sample('A1', dist.Uniform(A1_opt - bounds, A1_opt + bounds))
+            # Uniform priors on the entire field.
+            x1 = numpyro.sample('x1', dist.Uniform(-boundx, boundx))
+            y1 = numpyro.sample('y1', dist.Uniform(-boundy, boundy))
+            A1 = numpyro.sample('A1', dist.Uniform(0., 500.))
 
-            x2 = numpyro.sample('x2', dist.Uniform(x2_opt - bounds, x2_opt + bounds))
-            y2 = numpyro.sample('y2', dist.Uniform(y2_opt - bounds, y2_opt + bounds))
-            A2 = numpyro.sample('A2', dist.Uniform(A2_opt - bounds, A2_opt + bounds))
+            x2 = numpyro.sample('x2', dist.Uniform(-boundx, boundx))
+            y2 = numpyro.sample('y2', dist.Uniform(-boundy, boundy))
+            A2 = numpyro.sample('A2', dist.Uniform(0., 500.))
 
             # Model
-            mod = self.create_model_no_galaxy(x1, y1, A1, x2, y2, A2)
-            mod = self.down_resolution(mod)
+            mod = self.model_no_galaxy([x1, y1, A1, x2, y2, A2])
 
             # likelihood, gaussian errors
             with numpyro.plate('data', len(image_data_flat)):
@@ -310,10 +385,13 @@ class SimpleLensedQuasarModel:
 
         # run MCMC
         nuts_kernel = numpyro.infer.NUTS(numpyromodel)
-        mcmc = numpyro.infer.MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples)
+        mcmc = numpyro.infer.MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains)
         rng_key = random.PRNGKey(0)
-        mcmc.run(rng_key, self.data, self.noisemap, starting_point)
+        mcmc.run(rng_key, self.data, self.noisemap)
         mcmc.print_summary()
+        keys = ['x1', 'y1', 'A', 'x2', 'y2', 'A2']
+        medians = {k: np.median(val) for k, val in mcmc.get_samples().items()}
+        self.param_mediansampler_no_galaxy = [medians[k] for k in keys]
         return mcmc
 
     def _plot_model(self, params, modelfunc):
@@ -322,11 +400,10 @@ class SimpleLensedQuasarModel:
 
         cdata = self.data
         i0 = axs[0].imshow(cdata, origin='lower')
-        modfull = modelfunc(*params)
-        mod = self.down_resolution(modfull)
+        mod = modelfunc(params)
         i1 = axs[1].imshow(mod, origin='lower')
         i2 = axs[2].imshow((cdata - mod)/self.noisemap, origin='lower')
-        i3 = axs[3].imshow(modfull, origin='lower')
+        i3 = axs[3].imshow(mod, origin='lower')
         # colorbars
         for j, im in enumerate([i0, i1, i2, i3]):
             divider = make_axes_locatable(axs[j])
@@ -340,47 +417,55 @@ class SimpleLensedQuasarModel:
 
     def plot_model_no_galaxy(self, params=None):
         if params is None:
-            if self.param_optim_no_galaxy is not None:
+            if self.param_mediansampler_no_galaxy is not None:
+                params = self.param_mediansampler_no_galaxy
+                print('Used median params from sampling')
+            elif self.param_optim_no_galaxy is not None:
                 params = self.param_optim_no_galaxy
                 print('Used params from least-squares optimization')
             else:
                 params = self.initial_guess_no_galaxy
                 print('Used initial guess')
 
-        self._plot_model(params, self.create_model_no_galaxy)
+        self._plot_model(params, self.model_no_galaxy)
 
     def plot_model_with_galaxy(self, params=None):
         if params is None:
-            if self.param_optim_with_galaxy is not None:
+            if self.param_mediansampler_with_galaxy is not None:
+                params = self.param_mediansampler_with_galaxy
+                print('Used median params from sampling')
+            elif self.param_optim_with_galaxy is not None:
                 params = self.param_optim_with_galaxy
                 print('Used params from least-squares optimization')
             else:
                 params = self.initial_guess_with_galaxy
                 print('Used initial guess')
 
-        self._plot_model(params, self.create_model_with_galaxy)
+        self._plot_model(params, self.model_with_galaxy)
 
+
+#"""
 if __name__ == '__main__':
-    pass
-    # import matplotlib.pyplot as plt
+        # pass
+        psf = lambda x, y, x0, y0, A: A * np.exp(-0.022 * (x - x0)**2 - 0.02 * (y - y0)**2)
 
-    # psf = lambda x, y, x0, y0, A: A * np.exp(-0.2 * (x - x0)**2 - 0.17 * (y - y0)**2)
-    #
-    # # grid of small pixels
-    # X, Y = x, y = np.meshgrid(np.linspace(-32, 32, 128), np.linspace(-32, 32, 128))
-    #
-    # narrow_psf = psf(x, y, 0, 0, 1)
-    # narrow_psf /= narrow_psf.sum()
-    # modc = SimpleLensedQuasarModel(X, X, psf(X, Y, 0, 0, 1), 2)
-    # m = modc.create_model_with_galaxy(0, 10, 1, 0, -10, 1.5, 0, 0, 0.01, 5.0, 1.5, 0.5, 30)
-    #
-    # noise_scale = 0.0015
-    # data = modc.down_resolution(m)
-    # data += np.random.normal(loc=0, scale=noise_scale, size=data.shape)
-    # plt.imshow(data)
-    # noisemap = noise_scale * np.ones_like(data)
-    # modc.data = data
-    # modc.noisemap = noisemap
-    #
-    # plt.show()
+        # grid of small pixels
+        X, Y = x, y = np.meshgrid(np.linspace(-32, 32, 64), np.linspace(-32, 32, 64))
 
+        narrow_psf = psf(x, y, 0, 0, 1)
+        narrow_psf /= narrow_psf.sum()
+        modc = SimpleLensedQuasarModel(X, X, narrow_psf, 2, [], [])
+        params = [0, 6, 2, 0, -6, 3, 0, 0, 0.00, 5.0, 1.5, 0.5, 30]
+        m = modc.model_with_galaxy(params)
+
+        noise_scale = 0.001
+        data = m
+        data += np.random.normal(loc=0, scale=noise_scale, size=data.shape)
+        plt.imshow(data)
+        noisemap = noise_scale * np.ones_like(data)
+        modc.data = data
+        modc.noisemap = noisemap
+
+        plt.show()
+
+#"""
