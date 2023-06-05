@@ -38,7 +38,7 @@ def create_round_mask(size, radius):
     return arr
 
 
-def estimate_psf_from_extracted_h5(h5filepath):
+def estimate_psf_from_extracted_h5(h5filepath, upsampling_factor=2):
     """
     Here we'll open the file created with `download_and_extract`, and
     for each band
@@ -46,6 +46,7 @@ def estimate_psf_from_extracted_h5(h5filepath):
              estimate the PSF and store it in the same hdf5 file.
 
     :param h5filepath: string or Path, path to our cutouts.
+    :param upsampling_factor: int, how many times smaller should the PSF pixels be.
     :return: None
     """
 
@@ -61,11 +62,14 @@ def estimate_psf_from_extracted_h5(h5filepath):
             try:
                 # we overwrite stars and sigma_2 because the routine might have eliminated some of them.
                 narrowpsf, fullmodel, stars, sigma_2, loss_history = estimate_psf(stars, noisemaps**2, masks,
-                                                                                  upsampling_factor=2)
+                                                                                  upsampling_factor=upsampling_factor)
                 noisemaps = sigma_2**0.5
 
                 # store the estimated PSF in the hdf5 file.
                 update_hdf5(h5filepath, f"{band}/{imageindex}/psf", narrowpsf)
+                update_hdf5(h5filepath, f"{band}/{imageindex}/psf_supersampling_factor",
+                            np.array([upsampling_factor], dtype=int))
+
             except RuntimeError as E:
                 print(E)
 
@@ -323,14 +327,16 @@ def download_and_extract(ra, dec, workdir, survey='legacysurvey'):
                 transformed_cutoutslens[band][key]['wcs_header'].append(wcs_header)
 
     # once this is done, go back through each band, image and type of data to
-    # make them numpy arrays ...sigh
+    # make them numpy arrays
     for band, banddata in transformed_cutoutslens.items():
         for imageindex, objects in banddata.items():
             for key, array in objects.items():
                 if key == 'wcs_header':
                     objects[key] = np.array(array, dtype='S')
                 else:
-                    objects[key] = np.array(array)
+                    # but here we are doing the lens, not stars! so we expect one cutout per image.
+                    # our shape will be (1, Nx, Ny), let's make it (Nx,Ny).
+                    objects[key] = np.array(array[0])
 
     # next, the stars.
     transformed_cutouts = {}
