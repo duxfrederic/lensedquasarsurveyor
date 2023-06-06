@@ -38,7 +38,7 @@ def create_round_mask(size, radius):
     return arr
 
 
-def estimate_psf_from_extracted_h5(h5filepath, upsampling_factor=2):
+def estimate_psf_from_extracted_h5(h5filepath, upsampling_factor=2, redo=False):
     """
     Here we'll open the file created with `download_and_extract`, and
     for each band
@@ -47,12 +47,15 @@ def estimate_psf_from_extracted_h5(h5filepath, upsampling_factor=2):
 
     :param h5filepath: string or Path, path to our cutouts.
     :param upsampling_factor: int, how many times smaller should the PSF pixels be.
+    :param redo: bool, default False. Whether to estimate the PSF if it already is in h5filepath.
     :return: None
     """
 
     dic = load_dict_from_hdf5(h5filepath)
     for band, banddata in dic['stars'].items():
-
+        if not redo and band in dic and 'psf' in dic[band]['0']:
+            print(f'PSF already estimated for band {band}')
+            continue
         for imageindex, objects in banddata.items():
             stars = objects['stars']
             noisemaps = objects['noise']
@@ -235,7 +238,7 @@ def estimate_psf(stars, sigma_2, masks, upsampling_factor=2, debug=False):
     return narrowpsf, fullmodel, stars, sigma_2, L1 + optim.loss_history
 
 
-def download_and_extract(ra, dec, workdir, survey='legacysurvey'):
+def download_and_extract(ra, dec, workdir, survey='legacysurvey', mag_estimate=None):
     """
     This is a procedure, more than an atomic function. We do the following:
      - query the region around ra, dec for gaia detections, looking for stars we can use to model the PSF
@@ -248,6 +251,8 @@ def download_and_extract(ra, dec, workdir, survey='legacysurvey'):
     :param dec: float, degrees
     :param workdir: string or Path, where are we working at?
     :param survey: from which survey shoulde get the imaging data?
+    :param mag_estimate: float, optional, approx. magnitude of the images of the lens. Used to find the right
+                                nearby stars to model the PSF. if None, queries gaia to try and find out by itself.
     :return:
     """
     if survey not in config.supported_surveys:
@@ -271,11 +276,11 @@ def download_and_extract(ra, dec, workdir, survey='legacysurvey'):
     # downloading the images
     # try first with a "small" field (100 arcsec)
     fieldsize = 100
-    goodstars = get_similar_stars(ra, dec, fieldsize/2)
+    goodstars = get_similar_stars(ra, dec, fieldsize/2, mag_estimate=mag_estimate)
     # if not, try making it bigger:
     if len(goodstars[0]) < 1:
         fieldsize = 200
-        goodstars = get_similar_stars(ra, dec, fieldsize/2)
+        goodstars = get_similar_stars(ra, dec, fieldsize/2, mag_estimate=mag_estimate)
     # at this point, if still nothing we give up ...
     if len(goodstars[0]) < 1:
         raise RuntimeError("Really cannot find stars around {(ra, dec)} ...")

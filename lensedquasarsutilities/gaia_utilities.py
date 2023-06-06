@@ -54,7 +54,7 @@ def get_similar_stars(ra, dec, threshold_distance, mag_estimate=None, verbose=Fa
 
     # ok, now we just look at what else we have:
     available = available[available['dist'] > 3. * u.arcsec.to('degree')]
-    good = available[available['phot_g_mean_mag'] < mag_estimate]
+    good = available[(available['phot_g_mean_mag'] < mag_estimate) * (16.5 < available['phot_g_mean_mag'])]
     if verbose:
         print(f"We have {len(good)} stars of similar magnitudes.")
 
