@@ -8,6 +8,7 @@ from jax import jit
 from jax import vmap
 from functools import partial
 import jax.numpy as jnp
+from jax.scipy.signal import fftconvolve
 from jax import random
 from jax.image import scale_and_translate
 import numpyro
@@ -83,9 +84,10 @@ class SimpleLensedQuasarModel:
         nband2, nx, ny = narrowpsf.shape
         assert nband == nband2 == len(bandnames)
 
-        self.psf = gaussian_filter(narrowpsf, 0.85)  # narrow psf --> psf by convolving with gaussian kernel fwhm=2
+        # narrow psf --> psf by convolving with gaussian kernel fwhm=2
+        self.psf = np.array([gaussian_filter(e, 0.85) for e in narrowpsf])
 
-        x, y = np.arange(-Ny//2, Ny//2), np.arange(-Nx//2, Nx//2)
+        x, y = np.linspace(-(Ny-1)/2, (Ny-1)/2, Ny), np.linspace(-(Nx-1)/2, (Nx-1)/2, Nx)
         self.X, self.Y = np.meshgrid(x, y)
 
         self.param_optim_with_galaxy = None
@@ -93,8 +95,11 @@ class SimpleLensedQuasarModel:
         self.param_mediansampler_no_galaxy = None
         self.param_mediansampler_with_galaxy = None
 
-    @partial(jit, static_argnums=(0,))
-    def elliptical_sersic_profile(self, I_e, r_e, x0, y0, ellip, theta):
+    #@partial(jit, static_argnums=(0,))
+    def elliptical_sersic_profile(self, I_e, r_e, x0, y0, n, ellip, theta):
+        # x0 and y0 must be converted to model coordinates
+        # x0 -= (self.X.shape[1] - 1) / 2.
+        # y0 -= (self.X.shape[0] - 1) / 2.
         # Ellipticity and orientation parameters
         q = 1 - ellip
         theta = jnp.radians(theta)
@@ -104,11 +109,18 @@ class SimpleLensedQuasarModel:
         r = jnp.sqrt(xt ** 2 + (yt / q) ** 2)
         # sersic profile
         # let's fix n ...
-        n = 3
         bn = 1.9992 * n - 0.3271  # approximation valid for 0.5 < n < 10
-        return I_e * jnp.exp(-bn * ((r / r_e) ** (1 / n) - 1))
+        profilewow = jnp.exp(-bn * ((r / r_e) ** (1. / n) - 1))
+        profilewow /= profilewow.sum()
+        profile = I_e * profilewow
 
-    @partial(jit, static_argnums=(0,))
+        return profile
+
+    def elliptical_sersic_profile_convolved(self, I_e, r_e, x0, y0, n, ellip, theta, psf):
+        profile = self.elliptical_sersic_profile(I_e, r_e, x0, y0, n, ellip, theta)
+        return fftconvolve(profile, psf, mode='same')
+
+    #@partial(jit, static_argnums=(0,))
     def translate_and_scale_psf(self, dx, dy, amplitude, psf):
         outshape = self.X.shape
         supersampling = self.upsampling_factor
@@ -132,10 +144,10 @@ class SimpleLensedQuasarModel:
         A1s = jnp.array([params[band][0] for band in self.bands])
         A2s = jnp.array([params[band][1] for band in self.bands])
 
-        xs1 = jnp.array([x1] + [x1 + params[f'offsets_{band}'][0] for band in self.bands[1:]])
-        ys1 = jnp.array([y1] + [y1 + params[f'offsets_{band}'][1] for band in self.bands[1:]])
-        xs2 = jnp.array([x2] + [x2 + params[f'offsets_{band}'][0] for band in self.bands[1:]])
-        ys2 = jnp.array([y2] + [y2 + params[f'offsets_{band}'][1] for band in self.bands[1:]])
+        xs1 = jnp.array([x1 + params[f'offsets_{band}'][0] for band in self.bands])
+        ys1 = jnp.array([y1 + params[f'offsets_{band}'][1] for band in self.bands])
+        xs2 = jnp.array([x2 + params[f'offsets_{band}'][0] for band in self.bands])
+        ys2 = jnp.array([y2 + params[f'offsets_{band}'][1] for band in self.bands])
         vecpsf = vmap(lambda x, y, a, psf: self.translate_and_scale_psf(x, y, a, psf), in_axes=(0, 0, 0, 0))
         p1 = vecpsf(xs1, ys1, A1s, self.psf)
         p2 = vecpsf(xs2, ys2, A2s, self.psf)
@@ -146,24 +158,35 @@ class SimpleLensedQuasarModel:
     @partial(jit, static_argnums=(0,))
     def model_with_galaxy(self, params):
         model = self.model_no_galaxy(params)
+
         xg, yg = params['galparams']['positions']
-        r_e, ellip, theta = params['galparams']['morphology']
-        # , y1, A1, x2, y2, A2, xg, yg, I_e, r_e, n, ellip, theta]
-        vecsersic = vmap(lambda x, y, ie: self.elliptical_sersic_profile(ie, r_e, x, y, ellip, theta),
-                         in_axes=(0, 0, 0))
+
+        xgs = jnp.array([xg + params[f'offsets_{band}'][0] for band in self.bands])
+        ygs = jnp.array([yg + params[f'offsets_{band}'][1] for band in self.bands])
         I_es = jnp.array([params['galparams'][f'I_e_{band}'] for band in self.bands])
-        xgs = jnp.array([xg] + [xg + params[f'offsets_{band}'][0] for band in self.bands[1:]])
-        ygs = jnp.array([yg] + [yg + params[f'offsets_{band}'][1] for band in self.bands[1:]])
-        model += vecsersic(xgs, ygs, I_es)
+
+        # vecpsf = vmap(lambda x, y, a, psf: self.translate_and_scale_psf(x, y, a, psf), in_axes=(0, 0, 0, 0))
+        # p1 = vecpsf(xgs, ygs, I_es, self.psf)
+        # return model + p1
+
+        r_e, n, ellip, theta = params['galparams']['morphology']
+        vecsersic = vmap(lambda x, y, ie, psf: self.elliptical_sersic_profile_convolved(ie, r_e, x, y, n, ellip, theta, psf),
+                         in_axes=(0, 0, 0, 0))
+        psfs = jnp.array([self.translate_and_scale_psf(-0.5, -0.5, 1., self.psf[i]) for i in range(len(self.bands))])
+        model += vecsersic(xgs, ygs, I_es, psfs)
+
+        # vecsersic = vmap(lambda x, y, ie: self.elliptical_sersic_profile(ie, r_e, x, y, n, ellip, theta),
+        #                  in_axes=(0, 0, 0))
+        # model += vecsersic(xgs, ygs, I_es)
 
         return model
 
-    @partial(jit, static_argnums=(0,))
+    #@partial(jit, static_argnums=(0,))
     def residuals_with_galaxy(self, params):
         model = self.model_with_galaxy(params)
         return ((model - self.data) / self.noisemap).flatten()
 
-    @partial(jit, static_argnums=(0,))
+    #@partial(jit, static_argnums=(0,))
     def residuals_no_galaxy(self, params):
         model = self.model_no_galaxy(params)
         return ((model - self.data) / self.noisemap).flatten()
@@ -194,7 +217,7 @@ class SimpleLensedQuasarModel:
         self.param_optim_with_galaxy = res.x
         return res.x
 
-    def sample_with_galaxy(self, num_warmup=500, num_samples=500, num_chains=1):
+    def sample_with_galaxy(self, num_warmup=500, num_samples=500, num_chains=1, position_scale=10.):
 
         def numpyromodel(data, noise):
             # Flatten the images
@@ -206,47 +229,63 @@ class SimpleLensedQuasarModel:
             # so let's do it this way.
 
             _, sizey, sizex = data.shape
-            boundx, boundy = (sizex - 1.) / 2., (sizey - 1.) / 2.
-            pps = {}
+
+            params = {}
+
+            bs = position_scale/2
             # more likely to be in the center, let's use centered gaussian priors
-            x1 = numpyro.sample('x1', dist.Normal(loc=0., scale=2.))
-            y1 = numpyro.sample('y1', dist.Normal(loc=0., scale=2.))
+            x1 = numpyro.sample('x1', dist.Uniform(-bs, bs))
+            y1 = numpyro.sample('y1', dist.Uniform(-bs, bs))
 
-            x2 = numpyro.sample('x2', dist.Normal(loc=0., scale=2.))
-            y2 = numpyro.sample('y2', dist.Normal(loc=0., scale=2.))
+            x2 = numpyro.sample('x2', dist.Uniform(-bs, bs))
+            y2 = numpyro.sample('y2', dist.Uniform(-bs, bs))
 
-            pps['positions'] = (x1, y1, x2, y2)
+            # x1 = numpyro.sample('x1', dist.Normal(loc=0., scale=position_scale))
+            # y1 = numpyro.sample('y1', dist.Normal(loc=0., scale=position_scale))
+            #
+            # x2 = numpyro.sample('x2', dist.Normal(loc=0., scale=position_scale))
+            # y2 = numpyro.sample('y2', dist.Normal(loc=0., scale=position_scale))
 
-            xg = numpyro.sample('xg', dist.Normal(loc=0., scale=1.))
-            yg = numpyro.sample('yg', dist.Normal(loc=0., scale=1.))
-            pps['galparams'] = {}
-            pps['galparams']['positions'] = (xg, yg)
+            params['positions'] = (x1, y1, x2, y2)
 
-            r_e = numpyro.sample('r_e', dist.Uniform(0.5, 10))
-            ellip = numpyro.sample('ellip', dist.Uniform(0, 0.99))
+            # ok, let's condition xg, yg to lie somewhere between the point sources
+            angle = numpyro.deterministic("angle", jnp.arctan2(jnp.array([y2 - y1]), jnp.array([x2 - x1]))[0])
+            length = numpyro.deterministic("length", ((x2-x1)**2 + (y2-y1)**2)**0.5)
+            scale = numpyro.sample("scale", dist.Uniform(0.2, 0.8))  # "between" source 1 and source 2.
+            xg = numpyro.deterministic("xg",  x1 + jnp.cos(angle) * length * scale)
+            yg = numpyro.deterministic("yg",  y1 + jnp.sin(angle) * length * scale)
+
+            # xg = numpyro.sample('xg', dist.Normal(loc=0., scale=position_scale))
+            # yg = numpyro.sample('yg', dist.Normal(loc=0., scale=position_scale))
+
+            params['galparams'] = {}
+            params['galparams']['positions'] = (xg, yg)
+
+            r_e = numpyro.sample('r_e', dist.Uniform(0.5, 4.))
+            ellip = numpyro.sample('ellip', dist.Uniform(0., 0.9))
             theta = numpyro.sample('theta', dist.Uniform(0, 2*np.pi))
-            pps['galparams']['morphology'] = r_e, ellip, theta
+            n = numpyro.sample('n', dist.Normal(loc=4.0, scale=0.5))
+            params['galparams']['morphology'] = r_e, n, ellip, theta
 
-            pps['galparams']['I_e'] = {}
+            params['galparams']['I_e'] = {}
             for i, band in enumerate(self.bands):
-                A1 = numpyro.sample(f'A1_{band}', dist.Uniform(1, 100))
-                A2 = numpyro.sample(f'A2_{band}', dist.Uniform(1, 100))
-                pps[band] = (A1, A2)
-                pps['galparams'][f'I_e_{band}'] = numpyro.sample(f'I_e_{band}', dist.Uniform(0, 5))
+                A1 = numpyro.sample(f'A1_{band}', dist.Uniform(5., 140.))
+                A2 = numpyro.sample(f'A2_{band}', dist.Uniform(5., 140.))
+                params[band] = (A1, A2)
+                params['galparams'][f'I_e_{band}'] = numpyro.sample(f'I_e_{band}', dist.Uniform(0., 30.))
 
-                if not i == 0:
-                    dx = numpyro.sample(f'dx_{band}', dist.Normal(loc=0, scale=0.1))
-                    dy = numpyro.sample(f'dy_{band}', dist.Normal(loc=0, scale=0.1))
-                    pps[f'offsets_{band}'] = dx, dy
+                dx = numpyro.sample(f'dx_{band}', dist.Uniform(-0.1, 0.1))
+                dy = numpyro.sample(f'dy_{band}', dist.Uniform(-0.1, 0.1))
+                params[f'offsets_{band}'] = dx, dy
 
-            mod = self.model_with_galaxy(pps)
+            mod = self.model_with_galaxy(params)
 
             # likelihood, gaussian errors
             with numpyro.plate('data', len(image_data_flat)):
                 numpyro.sample('obs', dist.Normal(mod.flatten(), image_uncertainties_flat), obs=image_data_flat)
 
         # run MCMC
-        nuts_kernel = numpyro.infer.NUTS(numpyromodel)
+        nuts_kernel = numpyro.infer.BarkerMH(numpyromodel)
         mcmc = numpyro.infer.MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains)
         rng_key = random.PRNGKey(0)
         mcmc.run(rng_key, self.data, self.noisemap)
@@ -256,19 +295,24 @@ class SimpleLensedQuasarModel:
         medians = {k: np.median(val) for k, val in mcmc.get_samples().items()}
 
         pps['positions'] = [medians[k] for k in ('x1', 'y1', 'x2', 'y2')]
-        pps['galparams']['positions'] = [medians[k] for k in ('xg', 'yg')]
-        pps['galparams']['morphology'] = [medians[k] for k in ('r_e', 'ellip', 'theta')]
+        if 'xg' not in medians:
+            # then we forced the midpoint
+            x1, y1, x2, y2 = pps['positions']
+            xg, yg = 0.5 * (x1 + x2), 0.5 * (y1 + y2)
+            pps['galparams']['positions'] = xg, yg
+        else:
+            pps['galparams']['positions'] = [medians[k] for k in ('xg', 'yg')]
+        pps['galparams']['morphology'] = [medians[k] for k in ('r_e', 'n', 'ellip', 'theta')]
 
         for i, band in enumerate(self.bands):
             pps[band] = [medians[k] for k in (f'A1_{band}', f'A2_{band}')]
             pps['galparams'][f'I_e_{band}'] = medians[f'I_e_{band}']
-            if not i == 0:
-                pps[f'offsets_{band}'] = [medians[k] for k in (f'dx_{band}', f'dy_{band}')]
+            pps[f'offsets_{band}'] = [medians[k] for k in (f'dx_{band}', f'dy_{band}')]
 
         self.param_mediansampler_with_galaxy = pps
         return mcmc
 
-    def sample_no_galaxy(self, num_warmup=500, num_samples=500, num_chains=1, position_scale=5):
+    def sample_no_galaxy(self, num_warmup=500, num_samples=500, num_chains=1, position_scale=5.):
         """
 
         :param num_warmup: steps for warmup
@@ -304,14 +348,13 @@ class SimpleLensedQuasarModel:
             params['positions'] = (x1, y1, x2, y2)
 
             for i, band in enumerate(self.bands):
-                A1 = numpyro.sample(f'A1_{band}', dist.Uniform(0., 140))
-                A2 = numpyro.sample(f'A2_{band}', dist.Uniform(0., 140))
+                A1 = numpyro.sample(f'A1_{band}', dist.Uniform(5., 140.))
+                A2 = numpyro.sample(f'A2_{band}', dist.Uniform(5., 140.))
                 params[band] = (A1, A2)
 
-                if not i == 0:
-                    dx = numpyro.sample(f'dx_{band}', dist.Normal(loc=0, scale=1.))
-                    dy = numpyro.sample(f'dy_{band}', dist.Normal(loc=0, scale=1.))
-                    params[f'offsets_{band}'] = dx, dy
+                dx = numpyro.sample(f'dx_{band}', dist.Uniform(-0.1, 0.1))
+                dy = numpyro.sample(f'dy_{band}', dist.Uniform(-0.1, 0.1))
+                params[f'offsets_{band}'] = dx, dy
 
             mod = self.model_no_galaxy(params)
 
@@ -319,20 +362,6 @@ class SimpleLensedQuasarModel:
             with numpyro.plate('data', len(image_data_flat)):
                 numpyro.sample('obs', dist.Normal(mod.flatten(), image_uncertainties_flat), obs=image_data_flat)
 
-
-        # run MCMC trial
-        # import jax
-        # from numpyro.infer.util import initialize_model
-        #
-        # rng_key = jax.random.PRNGKey(0)
-        # init_params, potential_fn_gen, *_ = initialize_model(
-        #     rng_key,
-        #     numpyromodel,
-        #     model_args=(self.data, self.noisemap),
-        #     dynamic_args=False,
-        # )
-        # run MCMC
-        # nuts_kernel = numpyro.infer.NUTS(numpyromodel)
         nuts_kernel = numpyro.infer.BarkerMH(numpyromodel)
         mcmc = numpyro.infer.MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains)
         rng_key = random.PRNGKey(0)
@@ -344,8 +373,7 @@ class SimpleLensedQuasarModel:
 
         for i, band in enumerate(self.bands):
             pps[band] = [medians[k] for k in (f'A1_{band}', f'A2_{band}')]
-            if not i == 0:
-                pps[f'offsets_{band}'] = [medians[k] for k in (f'dx_{band}', f'dy_{band}')]
+            pps[f'offsets_{band}'] = [medians[k] for k in (f'dx_{band}', f'dy_{band}')]
 
         self.param_mediansampler_no_galaxy = pps
         return mcmc
@@ -358,11 +386,22 @@ class SimpleLensedQuasarModel:
         data = self.data
         noise = self.noisemap
         res = (data - mod) / noise
+        x1, y1, x2, y2 = params['positions']
+
+        offsx = (self.X.shape[1] - 1)/2.
+        offsy = (self.X.shape[0] - 1) / 2.
+        x1, x2 = x1 + offsx, x2 + offsx
+        y1, y2 = y1 + offsy, y2 + offsy
+        if 'galparams' in params:
+            xg, yg = params['galparams']['positions']
+            xg += offsx
+            yg += offsy
 
         for i, band in enumerate(self.bands):
             i0 = axs[i, 0].imshow(data[i], origin='lower')
             i1 = axs[i, 1].imshow(mod[i], origin='lower')
             i2 = axs[i, 2].imshow(res[i], origin='lower')
+            dx, dy = params[f'offsets_{band}']
 
             for j, (im, title) in enumerate(zip([i0, i1, i2], ['data', 'model', 'norm. res.'])):
                 divider = make_axes_locatable(axs[i, j])
@@ -370,7 +409,9 @@ class SimpleLensedQuasarModel:
                 fig.colorbar(im, cax=cax, orientation='vertical')
                 axs[i, j].axis('off')
                 axs[i, j].set_title(f'{band} {title}')
-
+                axs[i, j].plot([x1+dx, x2+dx], [y1+dy, y2+dy], 'x', color='red')
+                if 'galparams' in params:
+                    axs[i, j].plot([xg+dx], [yg+dy], 'x', color='orange')
         plt.tight_layout()
         return fig, axs
 
@@ -378,7 +419,7 @@ class SimpleLensedQuasarModel:
 
         fig, axs = plt.subplots(1, 3, figsize=(6, 2))
 
-        cdata = np.moveaxis(self.data, 0 , 2)
+        cdata = np.moveaxis(self.data, 0, 2)
         scale = np.nanpercentile(cdata, 99.5)
         i0 = axs[0].imshow(cdata / scale, origin='lower')
 
@@ -425,7 +466,11 @@ class SimpleLensedQuasarModel:
 
 
 if __name__ == "__main__":
+
+    # ff = '/tmp/test/cutouts_legacysurvey_J1037+0018_cutouts.h5'
+    # ff = '/tmp/test/cutouts_panstarrs_J1037+0018_cutouts.h5'
     ff = "/tmp/test/cutouts_legacysurvey_J2122-1621_cutouts.h5"
+    # ff = '/tmp/test/cutouts_panstarrs_J2122-1621_cutouts.h5'
     modelm = prepare_model_from_h5(ff)
     # param =  {'positions': (5, 5, -3, -5), 'g': (200., 105.), 'r': (100., 130.),
     #                                        'i': (90.0, 100.), 'z': (80.0, 100.)}
@@ -447,12 +492,29 @@ if __name__ == "__main__":
     # plt.imshow(hi2, origin='lower')
     # plt.show()
     #
-    #out = modelm.sample_with_galaxy(num_samples=100, num_warmup=100)
-    #modelm.plot_model_with_galaxy()
+    # out = modelm.sample_with_galaxy(num_samples=100, num_warmup=100)
+    # modelm.plot_model_with_galaxy()
     # modelm.plot_model_with_galaxy()
 
-    out = modelm.sample_no_galaxy(num_samples=1000, num_warmup=3000)
-    modelm.plot_model_no_galaxy()
+    modelm.param_mediansampler_with_galaxy = {'galparams': {'positions': [0, 0], 'morphology': [1.0710126, 1, 0.0,0],
+                                                            'I_e_g.00000': 0.5, 'I_e_i.00000': .1, 'I_e_r.00000': 2.0, 'I_e_z.00000': 5.0},
+                                              'positions': [0, 10, 0, -10], 'g.00000': [0., 0.],
+                                              'offsets_g.00000': [0., 0.], 'i.00000': [1., 1.],
+                                              'offsets_i.00000': [0., -0.0], 'r.00000': [1., 1.],
+                                              'offsets_r.00000': [0.0, -0.0], 'z.00000': [1.0, 1.],
+                                              'offsets_z.00000': [0.0, -0.0]}
+    modelm.param_mediansampler_no_galaxy = {  'positions': [0, 10, 0, 0], 'g.00000': [1., 1.],
+                                              'offsets_g.00000': [0., 0.], 'i.00000': [1., 1.],
+                                              'offsets_i.00000': [0., -0.0], 'r.00000': [1., 1.],
+                                              'offsets_r.00000': [0.0, -0.0], 'z.00000': [1.0, 1.],
+                                              'offsets_z.00000': [0.0, -0.0]}
+
+    # out = modelm.sample_no_galaxy(num_warmup=1000, num_samples=500, position_scale=10.0)
+    # modelm.plot_model_no_galaxy()
+    out = modelm.sample_with_galaxy(num_warmup=4000, num_samples=2500, position_scale=15.0)
+    print(modelm.param_mediansampler_with_galaxy)
+    modelm.plot_model_with_galaxy()
+    plt.show()
 """
 if __name__ == '__main__':
         # pass
