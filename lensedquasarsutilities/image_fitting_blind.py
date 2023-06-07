@@ -268,7 +268,18 @@ class SimpleLensedQuasarModel:
         self.param_mediansampler_with_galaxy = pps
         return mcmc
 
-    def sample_no_galaxy(self, num_warmup=500, num_samples=500, num_chains=1):
+    def sample_no_galaxy(self, num_warmup=500, num_samples=500, num_chains=1, position_scale=5):
+        """
+
+        :param num_warmup: steps for warmup
+        :param num_samples: steps for actual sampling
+        :param num_chains: number of chain to do in parallel. if gpu, prob. 1 is best unless multiple gpus.
+        :param position_scale: scale of the gaussian prior used for positions, in pixels.
+        :return: numpyro.infer MCMC class used to do the sampling here
+
+        params are updated in class, then you can use the plot functions which will use the medians of the
+        class attributes. (self.param_mediansampler_no_galaxy)
+        """
 
         def numpyromodel(data, noise):
             # Flatten the images
@@ -281,28 +292,28 @@ class SimpleLensedQuasarModel:
 
             _, sizey, sizex = data.shape
 
-            pps = {}
+            params = {}
 
             # more likely to be in the center, let's use centere gaussian priors
-            x1 = numpyro.sample('x1', dist.Normal(loc=0., scale=4.))
-            y1 = numpyro.sample('y1', dist.Normal(loc=0., scale=4.))
+            x1 = numpyro.sample('x1', dist.Normal(loc=0., scale=position_scale))
+            y1 = numpyro.sample('y1', dist.Normal(loc=0., scale=position_scale))
 
-            x2 = numpyro.sample('x2', dist.Normal(loc=0., scale=4.))
-            y2 = numpyro.sample('y2', dist.Normal(loc=0., scale=4.))
+            x2 = numpyro.sample('x2', dist.Normal(loc=0., scale=position_scale))
+            y2 = numpyro.sample('y2', dist.Normal(loc=0., scale=position_scale))
 
-            pps['positions'] = (x1, y1, x2, y2)
+            params['positions'] = (x1, y1, x2, y2)
 
             for i, band in enumerate(self.bands):
                 A1 = numpyro.sample(f'A1_{band}', dist.Uniform(0., 140))
                 A2 = numpyro.sample(f'A2_{band}', dist.Uniform(0., 140))
-                pps[band] = (A1, A2)
+                params[band] = (A1, A2)
 
                 if not i == 0:
-                    dx = numpyro.sample(f'dx_{band}', dist.Normal(loc=0, scale=0.1))
-                    dy = numpyro.sample(f'dy_{band}', dist.Normal(loc=0, scale=0.1))
-                    pps[f'offsets_{band}'] = dx, dy
+                    dx = numpyro.sample(f'dx_{band}', dist.Normal(loc=0, scale=1.))
+                    dy = numpyro.sample(f'dy_{band}', dist.Normal(loc=0, scale=1.))
+                    params[f'offsets_{band}'] = dx, dy
 
-            mod = self.model_no_galaxy(pps)
+            mod = self.model_no_galaxy(params)
 
             # likelihood, gaussian errors
             with numpyro.plate('data', len(image_data_flat)):

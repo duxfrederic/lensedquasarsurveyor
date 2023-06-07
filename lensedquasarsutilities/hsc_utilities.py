@@ -15,10 +15,10 @@ HSC_bands = ['HSC-G', 'HSC-R', 'HSC-I', 'HSC-Z', 'HSC-Y']
 
 
 def format_link(ra, dec, arcsec, band):
-    ra1 = ra - arcsec * u.arcsec.to('degree')
-    ra2 = ra + arcsec * u.arcsec.to('degree')
-    dec1 = dec - arcsec * u.arcsec.to('degree')
-    dec2 = dec + arcsec * u.arcsec.to('degree')
+    ra1 = ra - arcsec * u.arcsec.to('degree') / 2.
+    ra2 = ra + arcsec * u.arcsec.to('degree') / 2.
+    dec1 = dec - arcsec * u.arcsec.to('degree') / 2.
+    dec2 = dec + arcsec * u.arcsec.to('degree') / 2.
 
     link = template.format(ra1=ra1, dec1=dec1, ra2=ra2, dec2=dec2, band=band)
 
@@ -56,11 +56,21 @@ def combine_fits(filelist, savepath):
     # Create an empty HDU for position 0
     hdulist = fits.HDUList([fits.PrimaryHDU()])
     for path in filelist:
-        data = fits.open(path)
-        hdulist.append(data[1])  # data
-        varmaphdu = data[3]
-        varmaphdu.data = varmaphdu.data**0.5
-        hdulist.append(varmaphdu)  # std
+        # data
+        bandhdulist = fits.open(path)
+        headerhdu, datahduheader = bandhdulist[0].header, bandhdulist[1].header
+        datahduheader.update(headerhdu)
+        datahdu = bandhdulist[1]
+        datahdu.header = datahduheader
+        hdulist.append(datahdu)
+
+        headerhdu, varhduheader = bandhdulist[2].header, bandhdulist[3].header
+        varhduheader.update(headerhdu)
+        varhduheader['filter'] = datahduheader['filter']
+        varhdu = bandhdulist[3]
+        varhdu.header = varhduheader
+        varhdu.data = varhdu.data**0.5
+        hdulist.append(varhdu)
 
     hdulist.writeto(savepath, overwrite=True)
 
@@ -81,16 +91,16 @@ def download_hsc_cutout(ra, dec, size, downloaddir=None, filename=None, verbose=
         return savepath
 
     # the pixel size in HSC cutouts:
-    hsc_pixel_size = 0.168
+    # hsc_pixel_size = 0.168
     # convert to pixels, as the API wants pixels.
-    size_pix = int(size / hsc_pixel_size)
+    # aaaaaaaaah never mind, the HSC api wants arsecs.
 
     outfiles = []
     for band in HSC_bands:
         outname = f"{filename.replace('.fits', '')}_{band}.fits"
         outfile = Path(downloaddir) / outname
         try:
-            download_single_cutout(ra, dec, band, size_pix, outfile)
+            download_single_cutout(ra, dec, band, size, outfile)
             outfiles.append(outfile)
             if verbose:
                 print(f"Downloaded {band}-band HSC data at {ra,dec}.")
@@ -110,4 +120,4 @@ def download_hsc_cutout(ra, dec, size, downloaddir=None, filename=None, verbose=
 if __name__ == "__main__":
     raj, decj = 159.3665, 0.3057
 
-    print(download_hsc_cutout(raj, decj, 10, downloaddir='/tmp/', verbose=True))
+    print(download_hsc_cutout(raj, decj, 3, downloaddir='/tmp/', verbose=True))

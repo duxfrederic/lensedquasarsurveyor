@@ -22,13 +22,15 @@ def find_gaia_stars_around_coords(ra, dec, radiusarcsec):
     return r
 
 
-def get_similar_stars(ra, dec, threshold_distance, mag_estimate=None, verbose=False):
+def get_similar_stars(ra, dec, threshold_distance, mag_estimate=None, verbose=False, toobright=16.5):
     """
 
     :param ra:  float, degrees
     :param dec:  float, degrees
     :param threshold_distance:  float, arcseconds
     :param mag_estimate: float, the typical magnitude of the stars we are looking for.
+    :param verbose: bool, default False
+    :param toobright: float, stars under this g-mag are not included.
     :return:  a list of RAs and a list of Decs of the stars we found.
 
     """
@@ -54,7 +56,8 @@ def get_similar_stars(ra, dec, threshold_distance, mag_estimate=None, verbose=Fa
 
     # ok, now we just look at what else we have:
     available = available[available['dist'] > 3. * u.arcsec.to('degree')]
-    good = available[(available['phot_g_mean_mag'] < mag_estimate) * (16.5 < available['phot_g_mean_mag'])]
+
+    good = available[(available['phot_g_mean_mag'] < mag_estimate) * (toobright < available['phot_g_mean_mag'])]
     if verbose:
         print(f"We have {len(good)} stars of similar magnitudes.")
 

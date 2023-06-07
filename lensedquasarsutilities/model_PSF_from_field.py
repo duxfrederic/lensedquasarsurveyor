@@ -279,11 +279,11 @@ def download_and_extract(ra, dec, workdir, survey='legacysurvey', mag_estimate=N
     goodstars = get_similar_stars(ra, dec, fieldsize/2, mag_estimate=mag_estimate)
     # if not, try making it bigger:
     if len(goodstars[0]) < 1:
-        fieldsize = 200
+        fieldsize *= 2
         goodstars = get_similar_stars(ra, dec, fieldsize/2, mag_estimate=mag_estimate)
     # at this point, if still nothing we give up ...
     if len(goodstars[0]) < 1:
-        raise RuntimeError("Really cannot find stars around {(ra, dec)} ...")
+        raise RuntimeError(f"Really cannot find stars around {(ra, dec)} ...")
 
     savepath_fits = get_cutouts_file(ra, dec, fieldsize, downloaddir=workdir, survey=survey,
                                      filename=savepath_fits.name)
@@ -292,7 +292,7 @@ def download_and_extract(ra, dec, workdir, survey='legacysurvey', mag_estimate=N
     cutouts = {}
     names = 'abcde'  # no need for more than 5 stars, evah
     for rastar, decstar, name in zip(*goodstars, names):
-        cutouts[name] = extract_stamps(savepath_fits, rastar, decstar, survey, cutout_size=4)
+        cutouts[name] = extract_stamps(savepath_fits, rastar, decstar, survey, cutout_size=5)
 
     # also, let's get the lens!
     cutoutslens = extract_stamps(savepath_fits, ra, dec, survey, cutout_size=8)
@@ -390,4 +390,4 @@ if __name__ == "__main__":
     RA, DEC = 137.4946, -7.8179
 
     ff = download_and_extract(RA, DEC, workdir='/tmp/wow/', survey='legacysurvey')
-    #estimate_psf_from_extracted_h5(ff[1])
+    # estimate_psf_from_extracted_h5(ff[1])
