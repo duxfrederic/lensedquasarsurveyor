@@ -1,5 +1,6 @@
 from lensedquasarsutilities.legacysurvey_utilities import download_legacy_survey_cutout
 from lensedquasarsutilities.panstarrs_utilities import download_panstarrs_cutout
+from lensedquasarsutilities.hsc_utilities import download_hsc_cutout
 from lensedquasarsutilities import config
 
 
@@ -23,10 +24,14 @@ def get_cutouts_file(ra, dec, size, survey, downloaddir=None, filename=None, ver
     :param filename: optional, give a special name to the resulting fits file
     :return: the path to where the fits file was saved.
     """
+    survey = survey.lower()
     if survey == 'legacysurvey':
         download_func = download_legacy_survey_cutout
     elif survey == 'panstarrs':
         download_func = download_panstarrs_cutout
+    elif survey == 'hsc':
+        download_func = download_hsc_cutout
+
     else:
         message = f"Haven't implemented your choice of survey, the ones I have are {config.supported_surveys}"
         raise NotImplementedError(message)

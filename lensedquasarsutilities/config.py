@@ -1,7 +1,8 @@
-supported_surveys = ['legacysurvey', 'panstarrs']
+supported_surveys = ['legacysurvey', 'panstarrs', 'hsc']
 band_header_keyword = {
    'legacysurvey': 'BAND',
-   'panstarrs': 'FPA.FILTER'
+   'panstarrs': 'FPA.FILTER',
+   'hsc': 'FILTER'
 }
 
 if not set(band_header_keyword.keys()) == set(supported_surveys):
