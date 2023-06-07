@@ -361,7 +361,7 @@ class SimpleLensedQuasarModel:
                 axs[i, j].set_title(f'{band} {title}')
 
         plt.tight_layout()
-        plt.show()
+        return fig, axs
 
     def _plot_model_color(self, params, modelfunc):
 
@@ -383,8 +383,8 @@ class SimpleLensedQuasarModel:
             ax.set_title(title)
             ax.axis('off')
 
-        plt.tight_layout()
         plt.show()
+        return fig, axs
 
     def plot_model_no_galaxy(self, params=None):
         if params is None:
@@ -397,7 +397,7 @@ class SimpleLensedQuasarModel:
             else:
                 raise RuntimeError('Run an optimizer or sampler first')
 
-        self._plot_model(params, self.model_no_galaxy)
+        return self._plot_model(params, self.model_no_galaxy)
 
     def plot_model_with_galaxy(self, params=None):
         if params is None:
@@ -410,7 +410,7 @@ class SimpleLensedQuasarModel:
             else:
                 raise RuntimeError('Run an optimizer or sampler first')
 
-        self._plot_model(params, self.model_with_galaxy)
+        return self._plot_model(params, self.model_with_galaxy)
 
 
 if __name__ == "__main__":
