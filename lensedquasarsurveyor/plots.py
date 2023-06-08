@@ -1,7 +1,7 @@
 from pathlib import Path
 import numpy as np
 
-from lensedquasarsutilities.submodules import f2n
+from lensedquasarsurveyor.submodules import f2n
 
 
 def plot_psf(identifier, noise, stars, residuals, psf, lossplot, workdir):

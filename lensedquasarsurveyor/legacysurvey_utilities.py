@@ -8,8 +8,8 @@ from pathlib import Path
 import numpy as np
 from astropy.io import fits
 
-from lensedquasarsutilities.formatting import get_J2000_name
-from lensedquasarsutilities.exceptions import LegacySurveyNoData
+from lensedquasarsurveyor.formatting import get_J2000_name
+from lensedquasarsurveyor.exceptions import LegacySurveyNoData
 
 
 def download_legacy_survey_cutout(ra, dec, size, downloaddir=None, filename=None, verbose=False):

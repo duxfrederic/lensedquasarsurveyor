@@ -1,4 +1,4 @@
-from lensedquasarsutilities.gaia_utilities import get_positionangles_separations
+from lensedquasarsurveyor.gaia_utilities import get_positionangles_separations
 
 def test_get_positionangles_separations():
     # Set a known target with known results

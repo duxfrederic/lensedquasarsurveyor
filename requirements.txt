@@ -6,10 +6,9 @@ scipy
 starred-deconv~=1.0
 urllib3
 h5py
-
-lensedquasarsutilities
-starred
-pillow
-matplotlib
 jax
 numpyro
+matplotlib
+pillow
+
+starred

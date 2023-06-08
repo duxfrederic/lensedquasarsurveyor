@@ -5,8 +5,8 @@ import os
 from pathlib import Path
 from astropy.io import fits
 
-from lensedquasarsutilities.formatting import get_J2000_name
-from lensedquasarsutilities.exceptions import HSCCredentialsNotInEnvironment, HSCNoData
+from lensedquasarsurveyor.formatting import get_J2000_name
+from lensedquasarsurveyor.exceptions import HSCCredentialsNotInEnvironment, HSCNoData
 
 template = "https://hsc-release.mtk.nao.ac.jp/das_cutout/pdr3/cgi-bin/cutout?ra1={ra1:.5f}&dec1={dec1:.5f}"
 template += "&ra2={ra2:.5f}&dec2={dec2:.5f}&type=coadd&image=on&mask=off&variance=on&filter={band}&rerun=pdr3_wide"

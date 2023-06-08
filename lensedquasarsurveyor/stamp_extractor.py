@@ -5,7 +5,7 @@ from astropy.nddata import Cutout2D
 import astropy.units as u
 from astropy.coordinates import SkyCoord
 
-from lensedquasarsutilities.config import band_header_keyword
+from lensedquasarsurveyor.config import band_header_keyword
 
 
 def extract_stamps(cutoutfile, ra, dec, survey, cutout_size=6):
@@ -53,7 +53,7 @@ def extract_stamps(cutoutfile, ra, dec, survey, cutout_size=6):
 
 
 if __name__ == '__main__':
-    from lensedquasarsutilities.legacysurvey_utilities import download_legacy_survey_cutout
+    from lensedquasarsurveyor.legacysurvey_utilities import download_legacy_survey_cutout
     RA, DEC = 320.6075, -16.357
     ff = download_legacy_survey_cutout(RA, DEC, 99, verbose=True)
 

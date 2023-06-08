@@ -18,8 +18,8 @@ from astropy.wcs.utils import skycoord_to_pixel
 
 from starred.utils.generic_utils import pad_and_convolve_fft, Downsample
 
-from lensedquasarsutilities.io import load_dict_from_hdf5
-from lensedquasarsutilities.gaia_utilities import find_gaia_stars_around_coords
+from lensedquasarsurveyor.io import load_dict_from_hdf5
+from lensedquasarsurveyor.gaia_utilities import find_gaia_stars_around_coords
 
 
 def prepare_simple_lens_model_from_h5(h5file, imagecoords=None, debug=False, modeltype='simple'):
@@ -444,7 +444,7 @@ class SimpleLensedQuasarModel:
         self._plot_model(params, self.model_with_galaxy)
 
 
-#"""
+"""
 if __name__ == '__main__':
         # pass
         psf = lambda x, y, x0, y0, A: A * np.exp(-0.022 * (x - x0)**2 - 0.02 * (y - y0)**2)

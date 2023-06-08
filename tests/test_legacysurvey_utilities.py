@@ -1,4 +1,4 @@
-from lensedquasarsutilities.legacysurvey_utilities import download_legacy_survey_cutout, create_weighted_stack
+from lensedquasarsurveyor.legacysurvey_utilities import download_legacy_survey_cutout, create_weighted_stack
 
 
 def test_download_legacy_survey():

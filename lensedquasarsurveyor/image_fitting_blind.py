@@ -14,10 +14,9 @@ from jax import random
 from jax.image import scale_and_translate
 import numpyro
 import numpyro.distributions as dist
-from numpyro.infer import HMCECS, MCMC, NUTS
 
 
-from lensedquasarsutilities.io import load_dict_from_hdf5, save_dict_to_hdf5
+from lensedquasarsurveyor.io import load_dict_from_hdf5, save_dict_to_hdf5
 
 
 def prepare_fitter_from_h5(h5file, filter_psf=True, verbose=False):
@@ -61,7 +60,7 @@ def prepare_fitter_from_h5(h5file, filter_psf=True, verbose=False):
     return model
 
 
-def psf_cleaner(psf, frac_suppressed=0.4):
+def psf_cleaner(psf, frac_suppressed=0.25):
     """
         filters the edges of the PSF by
         - fitting a 2D gaussian
@@ -95,7 +94,7 @@ def psf_cleaner(psf, frac_suppressed=0.4):
     suppression_threshold = np.percentile(gaussian_2d_values, 100 * frac_suppressed)
 
     # suppress regions where the Gaussian is below the threshold
-    suppressed_data = np.where(gaussian_2d_values < suppression_threshold, 0.1 * psf, psf)
+    suppressed_data = np.where(gaussian_2d_values < suppression_threshold, 0.2 * psf, psf)
 
     return suppressed_data
 
@@ -342,6 +341,7 @@ class DoublyLensedQuasarFitter:
 
                 x2 = numpyro.sample('x2', dist.Uniform(-bs, bs))
                 y2 = numpyro.sample('y2', dist.Uniform(-bs, bs))
+
             elif positions_prior_type == 'gaussian':
                 x1 = numpyro.sample('x1', dist.Normal(loc=0., scale=position_scale))
                 y1 = numpyro.sample('y1', dist.Normal(loc=0., scale=position_scale))
@@ -355,8 +355,8 @@ class DoublyLensedQuasarFitter:
                 A1 = numpyro.sample(f'A1_{band}', dist.Uniform(-100., 200.))  # since we normalize our data, this range
                 A2 = numpyro.sample(f'A2_{band}', dist.Uniform(-100., 200.))  # should be fine ...
                 params[band] = (A1, A2)
-                dx = numpyro.sample(f'dx_{band}', dist.Uniform(-0.5, 0.5))  # had gaussian prior here, but
-                dy = numpyro.sample(f'dy_{band}', dist.Uniform(-0.5, 0.5))  # was getting insane translations
+                dx = numpyro.sample(f'dx_{band}', dist.Uniform(-1.0, 1.0))  # had gaussian prior here, but
+                dy = numpyro.sample(f'dy_{band}', dist.Uniform(-1.0, 1.0))  # was getting insane translations
                 params[f'offsets_{band}'] = dx, dy
 
             if not include_galaxy:

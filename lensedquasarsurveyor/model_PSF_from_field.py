@@ -15,13 +15,13 @@ from starred.utils import ds9reg
 from starred.plots import plot_function as ptf
 from starred.utils.noise_utils import propagate_noise
 
-from lensedquasarsutilities.gaia_utilities import get_similar_stars
-from lensedquasarsutilities.downloader import get_cutouts_file
-from lensedquasarsutilities.stamp_extractor import extract_stamps
-from lensedquasarsutilities import config
-from lensedquasarsutilities.formatting import get_J2000_name
-from lensedquasarsutilities.io import save_dict_to_hdf5, update_hdf5, load_dict_from_hdf5
-from lensedquasarsutilities.plots import plot_psf
+from lensedquasarsurveyor.gaia_utilities import get_similar_stars
+from lensedquasarsurveyor.downloader import get_cutouts_file
+from lensedquasarsurveyor.stamp_extractor import extract_stamps
+from lensedquasarsurveyor import config
+from lensedquasarsurveyor.formatting import get_J2000_name
+from lensedquasarsurveyor.io import save_dict_to_hdf5, update_hdf5, load_dict_from_hdf5
+from lensedquasarsurveyor.plots import plot_psf
 
 
 def create_round_mask(size, radius):
@@ -30,7 +30,7 @@ def create_round_mask(size, radius):
 
     center = (size - 1) / 2
 
-    distance = np.sqrt((x - center) ** 2 + (y - center) ** 2)
+    distance = np.sqrt((x - center)**2 + (y - center)**2)
 
     arr = np.full((size, size), True)
     arr[distance <= radius] = False

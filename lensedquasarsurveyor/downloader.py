@@ -1,7 +1,7 @@
-from lensedquasarsutilities.legacysurvey_utilities import download_legacy_survey_cutout
-from lensedquasarsutilities.panstarrs_utilities import download_panstarrs_cutout
-from lensedquasarsutilities.hsc_utilities import download_hsc_cutout
-from lensedquasarsutilities import config
+from lensedquasarsurveyor.legacysurvey_utilities import download_legacy_survey_cutout
+from lensedquasarsurveyor.panstarrs_utilities import download_panstarrs_cutout
+from lensedquasarsurveyor.hsc_utilities import download_hsc_cutout
+from lensedquasarsurveyor import config
 
 
 def get_cutouts_file(ra, dec, size, survey, downloaddir=None, filename=None, verbose=False):

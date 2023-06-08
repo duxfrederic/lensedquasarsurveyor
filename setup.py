@@ -5,7 +5,7 @@ with open("README.md", 'r') as f:
     long_description = f.read()
 
 setup(
-    name='lensedquasarsutilities',
+    name='lensedquasarsurveyor',
     version='0.1',
     python_requires='>3.8.0',
     description='collection of utilities for the search of lensed quasars',
@@ -15,7 +15,7 @@ setup(
     license='GPL',
     packages=find_packages(),
     package_data={
-        "lensedquasarsutilities": [],
+        "lensedquasarsurveyor": [],
         #"tests": ["test_data/*"]
     },
     install_requires=[

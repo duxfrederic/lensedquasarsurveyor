@@ -3,7 +3,7 @@ from astropy.coordinates import SkyCoord
 from astroquery.gaia import Gaia
 from astropy.table import vstack
 
-from lensedquasarsutilities.formatting import get_J2000_name
+from lensedquasarsurveyor.formatting import get_J2000_name
 
 
 def find_gaia_stars_around_coords(ra, dec, radiusarcsec):

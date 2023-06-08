@@ -7,8 +7,8 @@ from time import time
 from os.path import join, exists
 from multiprocessing import Pool
 
-from lensedquasarsutilities.formatting import get_J2000_name
-from lensedquasarsutilities.exceptions import PanSTARRSNoData
+from lensedquasarsurveyor.formatting import get_J2000_name
+from lensedquasarsurveyor.exceptions import PanSTARRSNoData
 
 download_target_url = "http://ps1images.stsci.edu/cgi-bin/ps1filenames.py?ra={ra}&dec={dec}&type=stack"
 
@@ -109,7 +109,7 @@ def download_panstarrs_cutout(ra, dec, size, downloaddir=None, filename=None, ve
 
     parsed_request = parse_requests(url)
     parsed_request_filtered = []
-    channels = 'grizY'
+    channels = 'grizy'
     for channel in channels:
         parsed_request_filtered += [e for e in parsed_request if f".{channel}." in e['shortname']]
     parsed_request = parsed_request_filtered
@@ -154,7 +154,7 @@ def combine_fits(filelist, savepath):
     # Create an empty HDU for position 0
     hdulist = fits.HDUList([fits.PrimaryHDU()])
 
-    for band in 'grizY':
+    for band in 'grizy':
         try:
             fim = [e for e in filelist if f'.{band}.unconv.fits' in e][0]
             fw = [e for e in filelist if f'.{band}.unconv.wt.fits' in e][0]
