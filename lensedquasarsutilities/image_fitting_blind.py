@@ -19,11 +19,12 @@ from numpyro.infer import HMCECS, MCMC, NUTS
 from lensedquasarsutilities.io import load_dict_from_hdf5
 
 
-def prepare_fitter_from_h5(h5file):
+def prepare_fitter_from_h5(h5file, verbose=False):
     """
 
     :param h5file: string or Path, path to an h5-file containing cutouts with WCS, PSFs, as prepared by
                                    download_and_extract and estimate_psf_from_extracted_h5.
+    :param verbose: bool, default False
     :return: a DoublyLensedQuasarFitter, ready to try its best to fit the data with its `sample` method.
     """
     data = load_dict_from_hdf5(h5file)
@@ -48,6 +49,7 @@ def prepare_fitter_from_h5(h5file):
         psfdata.append(psf)
 
     upsampling_factor = data[band]['0']['psf_supersampling_factor']
+    print(f"Preparing a multi band models using {len(bands)} bands, data size {lens.shape[1]} pixels.")
     lensdata, noisedata, psfdata = np.array(lensdata), np.array(noisedata), np.array(psfdata)
     model = DoublyLensedQuasarFitter(lensdata, noisedata, psfdata, upsampling_factor, bands)
 
@@ -432,6 +434,22 @@ class DoublyLensedQuasarFitter:
                 raise RuntimeError('Run an optimizer or sampler first')
 
         return self._plot_model(params, self.model_with_galaxy)
+
+    def view_data(self):
+        psf = self.psf
+        N = len(psf)
+        data = self.data
+        noisemap = self.noisemap
+        fig, axs = plt.subplots(nrows=3, ncols=N)
+        for i, (b, d, n, p) in enumerate(zip(self.bands, data, noisemap, psf)):
+            axs[0, i].set_title(b)
+            axs[0, i].imshow(d)
+            axs[1, i].imshow(n)
+            axs[2, i].imshow(p)
+            for ax in axs[:, i]:
+                ax.axis('off')
+        plt.tight_layout()
+        plt.show()
 
 
 if __name__ == "__main__":

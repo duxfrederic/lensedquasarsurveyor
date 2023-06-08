@@ -38,7 +38,7 @@ def create_round_mask(size, radius):
     return arr
 
 
-def estimate_psf_from_extracted_h5(h5filepath, upsampling_factor=2, redo=False):
+def estimate_psf_from_extracted_h5(h5filepath, upsampling_factor=2, redo=False, verbose=False):
     """
     Here we'll open the file created with `download_and_extract`, and
     for each band
@@ -48,6 +48,7 @@ def estimate_psf_from_extracted_h5(h5filepath, upsampling_factor=2, redo=False):
     :param h5filepath: string or Path, path to our cutouts.
     :param upsampling_factor: int, how many times smaller should the PSF pixels be.
     :param redo: bool, default False. Whether to estimate the PSF if it already is in h5filepath.
+    :param verbose: bool, default False.
     :return: None
     """
 
@@ -60,6 +61,9 @@ def estimate_psf_from_extracted_h5(h5filepath, upsampling_factor=2, redo=False):
             stars = objects['stars']
             noisemaps = objects['noise']
             hsize = stars.shape[1]
+            if verbose:
+                print(f"PSF for band {band}, image {imageindex} using {len(stars)} cutouts of size {hsize} pixels.")
+                print(f"Our upsampling factor is {upsampling_factor}.")
             masks = create_round_mask(hsize, 0.5*hsize)  # yeaaaaaaah I don't want to deal with masking yet.
             masks = np.repeat(masks[np.newaxis, ...], stars.shape[0], axis=0)
             try:
@@ -238,7 +242,7 @@ def estimate_psf(stars, sigma_2, masks, upsampling_factor=2, debug=False):
     return narrowpsf, fullmodel, stars, sigma_2, L1 + optim.loss_history
 
 
-def download_and_extract(ra, dec, workdir, survey='legacysurvey', mag_estimate=None):
+def download_and_extract(ra, dec, workdir, survey='legacysurvey', mag_estimate=None, verbose=False):
     """
     This is a procedure, more than an atomic function. We do the following:
      - query the region around ra, dec for gaia detections, looking for stars we can use to model the PSF
@@ -252,7 +256,8 @@ def download_and_extract(ra, dec, workdir, survey='legacysurvey', mag_estimate=N
     :param workdir: string or Path, where are we working at?
     :param survey: from which survey shoulde get the imaging data?
     :param mag_estimate: float, optional, approx. magnitude of the images of the lens. Used to find the right
-                                nearby stars to model the PSF. if None, queries gaia to try and find out by itself.
+                                nearby stars to model the PSF. if None, queries gaia to try and find out by itself
+    :param verbose: Bool, default False.
     :return:
     """
     if survey not in config.supported_surveys:
@@ -265,28 +270,32 @@ def download_and_extract(ra, dec, workdir, survey='legacysurvey', mag_estimate=N
     filename = f"cutouts_{survey}_{get_J2000_name(ra, dec)}.fits"
 
     workdir = Path(workdir)
-    workdir.mkdir(exist_ok=True)
+    workdir.mkdir(exist_ok=True, parents=True)
 
     savepath_fits = workdir / filename
     savepath_cutouts = workdir / (filename.replace('.fits', '_cutouts.h5'))
     if savepath_cutouts.exists() and savepath_fits.exists():
+        if verbose:
+            print('Cutouts already exist, at', savepath_fits, 'and', savepath_cutouts)
         return savepath_fits, savepath_cutouts
 
     # ok, now we can proceed.
     # downloading the images
     # try first with a "small" field (100 arcsec)
     fieldsize = 100
-    goodstars = get_similar_stars(ra, dec, fieldsize/2, mag_estimate=mag_estimate)
+    goodstars = get_similar_stars(ra, dec, fieldsize/2, mag_estimate=mag_estimate, verbose=verbose)
     # if not, try making it bigger:
-    if len(goodstars[0]) < 1:
-        fieldsize *= 2
-        goodstars = get_similar_stars(ra, dec, fieldsize/2, mag_estimate=mag_estimate)
+    while len(goodstars[0]) < 1 and fieldsize < 250:
+        if verbose:
+            print(f'Making field bigger to find PSF stars: {fieldsize:.0f} arcseconds.')
+        fieldsize *= 1.2
+        goodstars = get_similar_stars(ra, dec, fieldsize/2, mag_estimate=mag_estimate, verbose=verbose)
     # at this point, if still nothing we give up ...
     if len(goodstars[0]) < 1:
         raise RuntimeError(f"Really cannot find stars around {(ra, dec)} ...")
 
     savepath_fits = get_cutouts_file(ra, dec, fieldsize, downloaddir=workdir, survey=survey,
-                                     filename=savepath_fits.name)
+                                     filename=savepath_fits.name, verbose=verbose)
 
     # extracting the cutouts
     cutouts = {}

@@ -11,3 +11,17 @@ class HSCNoData(Exception):
     def __init__(self, message="No HSC data found at your coordinates"):
         self.message = message
         super().__init__(self.message)
+
+
+class LegacySurveyNoData(Exception):
+    # here pass band, ra, dec info
+    def __init__(self, message="No Legacy Survey data found at your coordinates"):
+        self.message = message
+        super().__init__(self.message)
+
+
+class PanSTARRSNoData(Exception):
+    # here pass band, ra, dec info
+    def __init__(self, message="No PanSTARRS data found at your coordinates"):
+        self.message = message
+        super().__init__(self.message)

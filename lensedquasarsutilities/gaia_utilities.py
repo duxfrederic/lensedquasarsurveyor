@@ -37,10 +37,6 @@ def get_similar_stars(ra, dec, threshold_distance, mag_estimate=None, verbose=Fa
     available = find_gaia_stars_around_coords(ra, dec, threshold_distance)
     available.sort('dist')
 
-    if verbose:
-        print(f"Found {len(available)} potential stars.")
-        print(f"Magnitudes: {[round(e['phot_g_mean_mag'],2) for e in available]}.")
-
     # so, if we do not provide a magnitude estimate, then we query gaia around our coordinates:
     # hopefully we will find the magnitude of at least the brightest image of our lensed quasar.
     if not mag_estimate:
@@ -51,15 +47,16 @@ def get_similar_stars(ra, dec, threshold_distance, mag_estimate=None, verbose=Fa
         veryclose.sort('phot_g_mean_mag')
         mag_estimate = veryclose[0]['phot_g_mean_mag']
 
-    if verbose:
-        print(f"Our magnitude estimate is {mag_estimate:.2f}.")
-
     # ok, now we just look at what else we have:
     available = available[available['dist'] > 3. * u.arcsec.to('degree')]
 
+    if verbose:
+        print(f"Found {len(available)} potential stars.")
+        print(f"Magnitudes: {[round(e['phot_g_mean_mag'],2) for e in available]}.")
+
     good = available[(available['phot_g_mean_mag'] < mag_estimate) * (toobright < available['phot_g_mean_mag'])]
     if verbose:
-        print(f"We have {len(good)} stars of similar magnitudes.")
+        print(f"We have {len(good)} stars with {mag_estimate} > mag > {toobright}.")
 
     # just return the coordinates
     ras = [g['ra'] for g in good]

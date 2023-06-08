@@ -8,6 +8,7 @@ from os.path import join, exists
 from multiprocessing import Pool
 
 from lensedquasarsutilities.formatting import get_J2000_name
+from lensedquasarsutilities.exceptions import PanSTARRSNoData
 
 download_target_url = "http://ps1images.stsci.edu/cgi-bin/ps1filenames.py?ra={ra}&dec={dec}&type=stack"
 
@@ -121,6 +122,8 @@ def download_panstarrs_cutout(ra, dec, size, downloaddir=None, filename=None, ve
 
     # 2 files (wt, image) for each stack:
     Nimage = len(parsed_request)
+    if Nimage == 0:
+        raise PanSTARRSNoData(f"No Pan-STARRS data at {ra,dec}")
     if verbose:
         print(f"######### Downloading. There are {Nimage} stacks to download.")
     # since we are using multirpocessing and I don't want to write 200 lines,

@@ -9,6 +9,7 @@ import numpy as np
 from astropy.io import fits
 
 from lensedquasarsutilities.formatting import get_J2000_name
+from lensedquasarsutilities.exceptions import LegacySurveyNoData
 
 
 def download_legacy_survey_cutout(ra, dec, size, downloaddir=None, filename=None, verbose=False):
@@ -51,6 +52,17 @@ def download_legacy_survey_cutout(ra, dec, size, downloaddir=None, filename=None
     except Exception as e:
         print(f"An error occurred while downloading the file: {e}")
 
+    # check whether we have data or not:
+    hdulist = fits.open(savepath)
+
+    if len(hdulist) < 2:
+        hdulist.close()
+        savepath.unlink(missing_ok=True)
+        raise LegacySurveyNoData(f"No Legacy Survey DR10 data at {ra, dec}.")
+
+    if verbose:
+        print(f"Downloaded {len(hdulist)} Legacy Survey images and varmaps, that is before checking them.")
+
     # ADD GAUSSIAN NOISE, eliminate first hdu which has no data.
     estimate_and_add_gaussian_noise(savepath, verbose=verbose)
     return savepath
@@ -79,6 +91,12 @@ def estimate_and_add_gaussian_noise(filename, num_iterations=3, sigma_threshold=
         if d.shape[0] == d.shape[1] == invv.shape[0] == invv.shape[0]:
             newlist.append(hdulist[band_idx])
             newlist.append(hdulist[band_idx+1])
+        else:
+            if verbose:
+                print(f"Shapes do not match, incomplete data in the current band {band_idx}. Discarding.")
+
+    if len(newlist) < 2:
+        raise LegacySurveyNoData(f"No useful data in the end, we downloaded things, but did not find complete data.")
 
     for band_idx in range(1, len(newlist), 2):
         band_data = newlist[band_idx].data
@@ -146,6 +164,8 @@ def create_weighted_stack(filename, band, verbose=False):
 
 if __name__ == "__main__":
     # J 2122-1621
-    ff = download_legacy_survey_cutout(320.6075, -16.357, 99, verbose=True)
+    # ff = download_legacy_survey_cutout(320.6075, -16.357, 99, verbose=True)
+    raj, decj = 21.3174, -10.2082
+    download_legacy_survey_cutout(raj, decj, 99, verbose=True)
 
-    stacki, nmap = create_weighted_stack(ff, 'g')
+    # stacki, nmap = create_weighted_stack(ff, 'g')
