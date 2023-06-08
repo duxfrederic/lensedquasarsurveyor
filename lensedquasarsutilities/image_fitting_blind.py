@@ -1,4 +1,5 @@
 import numpy as np
+from pathlib import Path
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.optimize import least_squares
@@ -16,7 +17,7 @@ import numpyro.distributions as dist
 from numpyro.infer import HMCECS, MCMC, NUTS
 
 
-from lensedquasarsutilities.io import load_dict_from_hdf5
+from lensedquasarsutilities.io import load_dict_from_hdf5, save_dict_to_hdf5
 
 
 def prepare_fitter_from_h5(h5file, filter_psf=True, verbose=False):
@@ -154,10 +155,7 @@ class DoublyLensedQuasarFitter:
         self.param_mediansampler_with_galaxy = None
 
     def elliptical_sersic_profile(self, I_e, r_e, x0, y0, n, ellip, theta):
-        # x0 and y0 must be converted to model coordinates
-        # x0 -= (self.X.shape[1] - 1) / 2.
-        # y0 -= (self.X.shape[0] - 1) / 2.
-        # Ellipticity and orientation parameters
+        # ellipticity and orientation parameters
         q = 1 - ellip
         theta = jnp.radians(theta)
         xt = (self.X - x0) * jnp.cos(theta) + (self.Y - y0) * jnp.sin(theta)
@@ -505,6 +503,77 @@ class DoublyLensedQuasarFitter:
         plt.tight_layout()
         plt.show()
 
+    @staticmethod
+    def convert_lists_to_arrays(data):
+        if isinstance(data, dict):
+            return {key: DoublyLensedQuasarFitter.convert_lists_to_arrays(value) for key, value in data.items()}
+        elif isinstance(data, list):
+            return np.array(data)
+        elif isinstance(data, float):
+            return np.array([data])
+        elif data is None:
+            return np.array([])
+        else:
+            return data
+
+    @staticmethod
+    def convert_arrays_to_lists(data):
+        if isinstance(data, dict):
+            return {key: DoublyLensedQuasarFitter.convert_arrays_to_lists(value) for key, value in data.items()}
+        elif isinstance(data, np.ndarray):
+            return data.tolist()
+        else:
+            return data
+
+    def to_hdf5(self, filename):
+        # attributes to save
+        attributes = {
+            "data": self.data,
+            "noisemap": self.noisemap,
+            "psf": self.psf,
+            "bands": np.array([np.string_(band) for band in self.bands]),  # encode strings as bytes
+            "upsampling_factor": np.array([self.upsampling_factor]),
+            "param_optim_no_galaxy": self.convert_lists_to_arrays(self.param_optim_no_galaxy),
+            "param_optim_with_galaxy": self.convert_lists_to_arrays(self.param_optim_with_galaxy),
+            "param_mediansampler_no_galaxy": self.convert_lists_to_arrays(self.param_mediansampler_no_galaxy),
+            "param_mediansampler_with_galaxy": self.convert_lists_to_arrays(self.param_mediansampler_with_galaxy),
+            "X": self.X,
+            "Y": self.Y,
+        }
+
+        # Save the attributes to the hdf5 file
+        save_dict_to_hdf5(filename, attributes)
+
+    @classmethod
+    def from_hdf5(cls, filename):
+        # Load the attributes dict from the hdf5 file
+        attributes = load_dict_from_hdf5(filename)
+        print(attributes)
+
+        # convert any ndarray attributes that are not data back to their original type
+        for key, value in attributes.items():
+            if isinstance(value, np.ndarray) and key not in ["data", "noisemap", "psf", "X", "Y"]:
+                if key == "bands":  # decode bytes back to strings here ...
+                    attributes[key] = [band.decode() for band in value]
+                else:
+                    if len(value) == 0:
+                        attributes[key] = None
+                    else:
+                        attributes[key] = value[0]
+
+        # convert any ndarray attributes that were list back to their original type, cuz we can.
+        attributes["param_mediansampler_no_galaxy"] = cls.convert_arrays_to_lists(attributes["param_mediansampler_no_galaxy"])
+        attributes["param_mediansampler_with_galaxy"] = cls.convert_arrays_to_lists(attributes["param_mediansampler_with_galaxy"])
+
+        # new object without calling __init__
+        new_instance = cls.__new__(cls)
+
+        # setting the attributes of the new object
+        for key, value in attributes.items():
+            setattr(new_instance, key, value)
+
+        return new_instance
+
 
 if __name__ == "__main__":
 
@@ -512,23 +581,30 @@ if __name__ == "__main__":
     # ff = '/tmp/test/cutouts_panstarrs_J1037+0018_cutouts.h5'
     ff = "/tmp/test/cutouts_legacysurvey_J2122-1621_cutouts.h5"
     # ff = '/tmp/test/cutouts_panstarrs_J2122-1621_cutouts.h5'
+    ff = '/scratch/diff_img_paper/survey_data_and_modelling/PSJ0557-2959/legacysurvey/cutouts_legacysurvey_J0557-2959_cutouts.h5'
     modelm = prepare_fitter_from_h5(ff)
 
     modelm.param_mediansampler_with_galaxy = {'galparams': {'positions': [0, 0], 'morphology': [1.0710126, 1., 0.0, 0.],
-                                                            'I_e_g.00000': 0.5, 'I_e_i.00000': .1,
-                                                            'I_e_r.00000': 2.0, 'I_e_z.00000': 5.0},
-                                              'positions': [0., 1., 0., 1.], 'g.00000': [0., 0.],
-                                              'offsets_g.00000': [0.0, 0.0], 'i.00000': [1., 1.],
-                                              'offsets_i.00000': [0.0, 0.0], 'r.00000': [1., 1.],
-                                              'offsets_r.00000': [0.0, 0.0], 'z.00000': [1., 1.],
-                                              'offsets_z.00000': [0.0, 0.0]}
-    modelm.param_mediansampler_no_galaxy = {'positions': [0., 1., 0., 0.], 'g.00000': [1., 1.],
-                                            'offsets_g.00000': [0.0, 0.0], 'i.00000': [1., 1.],
-                                            'offsets_i.00000': [0.0, 0.0], 'r.00000': [1., 1.],
-                                            'offsets_r.00000': [0.0, 0.0], 'z.00000': [1., 1.],
-                                            'offsets_z.00000': [0.0, 0.0]}
+                                                            'I_e_g': 0.5, 'I_e_i': .1,
+                                                            'I_e_r': 2.0, 'I_e_z': 5.0},
+                                              'positions': [0., 1., 0., 1.], 'g': [0., 0.],
+                                              'offsets_g': [0.0, 0.0], 'i': [1., 1.],
+                                              'offsets_i': [0.0, 0.0], 'r': [1., 1.],
+                                              'offsets_r': [0.0, 0.0], 'z': [1., 1.],
+                                              'offsets_z': [0.0, 0.0]}
+    modelm.param_mediansampler_no_galaxy = {'positions': [0., 1., 0., 0.], 'g': [1., 1.],
+                                            'offsets_g': [0.0, 0.0], 'i': [1., 1.],
+                                            'offsets_i': [0.0, 0.0], 'r': [1., 1.],
+                                            'offsets_r': [0.0, 0.0], 'z': [1., 1.],
+                                            'offsets_z': [0.0, 0.0]}
 
-    out = modelm.sample_with_galaxy(num_warmup=2000, num_samples=1500, position_scale=15.0, include_galaxy=False)
-    print(modelm.param_mediansampler_with_galaxy)
-    modelm.plot_model_no_galaxy()
-    plt.show()
+    # out = modelm.sample(num_warmup=1000, num_samples=500, position_scale=15.0, include_galaxy=False)
+    # print(modelm.param_mediansampler_with_galaxy)
+    # modelm.plot_model_no_galaxy()
+    # plt.show()
+    modelm.param_mediansampler_no_galaxy = None
+    modelm.to_hdf5('/tmp/wow.h5')
+    m2 = DoublyLensedQuasarFitter.from_hdf5('/tmp/wow.h5')
+    m2.sample(include_galaxy=False)
+    m2.plot_model_no_galaxy()
+    m2.plot_model_with_galaxy()
