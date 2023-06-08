@@ -56,8 +56,12 @@ def combine_fits(filelist, savepath):
     # Create an empty HDU for position 0
     hdulist = fits.HDUList([fits.PrimaryHDU()])
     for path in filelist:
-        # data
-        bandhdulist = fits.open(path)
+        try:
+            # data
+            bandhdulist = fits.open(path)
+        except OSError:
+            print(f"Problem with fits file at {path}")
+            continue
         headerhdu, datahduheader = bandhdulist[0].header, bandhdulist[1].header
         datahduheader.update(headerhdu)
         datahdu = bandhdulist[1]
@@ -71,7 +75,9 @@ def combine_fits(filelist, savepath):
         varhdu.header = varhduheader
         varhdu.data = varhdu.data**0.5
         hdulist.append(varhdu)
-
+    if len(hdulist) == 1:
+        # then we didn't collect anything ...
+        raise HSCNoData("It seems we could download some files initially, but could not combine them.")
     hdulist.writeto(savepath, overwrite=True)
 
     # remove original files:
@@ -104,8 +110,10 @@ def download_hsc_cutout(ra, dec, size, downloaddir=None, filename=None, verbose=
             outfiles.append(outfile)
             if verbose:
                 print(f"Downloaded {band}-band HSC data at {ra,dec}.")
+        except HSCCredentialsNotInEnvironment:
+            raise HSCCredentialsNotInEnvironment  # yeah no won't let that slide bro
         except Exception as e:
-            print(f"Probelm with band {band}: {e}")
+            print(f"Problem with band {band}: {e}")
 
     if len(outfiles) == 0:
         raise HSCNoData(f"Could not get data in HSC at {ra}, {dec}.")

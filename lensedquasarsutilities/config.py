@@ -4,6 +4,13 @@ band_header_keyword = {
    'panstarrs': 'FPA.FILTER',
    'hsc': 'FILTER'
 }
+limit_psf_star_magnitude = {
+    'legacysurvey': 16.5,
+    'panstarrs': 16.,
+    'hsc': 18.
+}
 
 if not set(band_header_keyword.keys()) == set(supported_surveys):
     raise AssertionError('Not all surveys have their band keyword info')
+if not set(limit_psf_star_magnitude.keys()) == set(supported_surveys):
+    raise AssertionError('Not all surveys have their limit mag star for psf')

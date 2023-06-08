@@ -19,11 +19,14 @@ from numpyro.infer import HMCECS, MCMC, NUTS
 from lensedquasarsutilities.io import load_dict_from_hdf5
 
 
-def prepare_fitter_from_h5(h5file, verbose=False):
+def prepare_fitter_from_h5(h5file, filter_psf=True, verbose=False):
     """
 
     :param h5file: string or Path, path to an h5-file containing cutouts with WCS, PSFs, as prepared by
                                    download_and_extract and estimate_psf_from_extracted_h5.
+    :param filter_psf: bool, default True. Supress the edges of the PSF. Can be a decent safety given our method of
+                       psf modelling. If the PSF is completely out of control, might suppress useful regions. But
+                       in this case this whole endeavor would be useless ...
     :param verbose: bool, default False
     :return: a DoublyLensedQuasarFitter, ready to try its best to fit the data with its `sample` method.
     """
@@ -51,13 +54,54 @@ def prepare_fitter_from_h5(h5file, verbose=False):
     upsampling_factor = data[band]['0']['psf_supersampling_factor']
     print(f"Preparing a multi band models using {len(bands)} bands, data size {lens.shape[1]} pixels.")
     lensdata, noisedata, psfdata = np.array(lensdata), np.array(noisedata), np.array(psfdata)
-    model = DoublyLensedQuasarFitter(lensdata, noisedata, psfdata, upsampling_factor, bands)
+    model = DoublyLensedQuasarFitter(lensdata, noisedata, psfdata, upsampling_factor, bands, filter_psf)
 
     return model
 
 
+def psf_cleaner(psf, frac_suppressed=0.5):
+    """
+        filters the edges of the PSF by
+        - fitting a 2D gaussian
+        - marking the pixels below a certain fraction of the total luminosity
+        - making those pixels 10 times smaller in the original PSF.
+
+        :param psf: 2d array
+        :param frac_suppressed: float, fraction of the pixels (determined by inspecting the levels of the
+                                fitted 2d gaussian) to be suppressed.
+    """
+    import numpy as np
+    from scipy.optimize import least_squares
+
+    def gaussian_2d(xy, amp, x0, y0, sigma_x, sigma_y):
+        x, y = xy
+        gauss = amp * np.exp(-(x - x0) ** 2 / (2 * sigma_x ** 2) - (y - y0) ** 2 / (2 * sigma_y ** 2))
+        return gauss.ravel()
+
+    def residuals(p, xy, data):
+        return gaussian_2d(xy, *p) - data.ravel()
+
+    # Get the x, y values for each data point
+    x = np.arange(psf.shape[1])
+    y = np.arange(psf.shape[0])
+    x, y = np.meshgrid(x, y)
+
+    max_loc = (psf.shape[1] - 1) / 2, (psf.shape[0] - 1) / 2,
+    init_guess = [np.max(psf), max_loc[1], max_loc[0], psf.shape[1] * 0.15, psf.shape[0] * 0.15]
+
+    popt = least_squares(residuals, init_guess, args=((x, y), psf)).x
+
+    gaussian_2d_values = gaussian_2d((x, y), *popt).reshape(psf.shape)
+    suppression_threshold = np.percentile(gaussian_2d_values, 100 * frac_suppressed)
+
+    # suppress regions where the Gaussian is below the threshold
+    suppressed_data = np.where(gaussian_2d_values < suppression_threshold, 0.1 * psf, psf)
+
+    return suppressed_data
+
+
 class DoublyLensedQuasarFitter:
-    def __init__(self, data, noisemap, narrowpsf, upsampling_factor, bandnames):
+    def __init__(self, data, noisemap, narrowpsf, upsampling_factor, bandnames, filter_psf):
         """
         A class that will hold your data in different bands (cutouts, noisemaps, psfs).
         Its end goal is using its `sample` method to blindly fit two PSFs to the data, and potentially a
@@ -71,6 +115,9 @@ class DoublyLensedQuasarFitter:
         :param noisemap: 2D np array
         :param narrowpsf: 2D np array
         :param upsampling_factor: int
+        :param filter_psf: bool, default True. Supress the edges of the PSF. Can be a decent safety given our method of
+                           psf modelling. If the PSF is completely out of control, might suppress useful regions. But
+                           in this case this whole endeavor would be useless ...
 
         """
 
@@ -95,6 +142,8 @@ class DoublyLensedQuasarFitter:
 
         # narrow psf --> psf by convolving with gaussian kernel fwhm=2
         self.psf = np.array([gaussian_filter(e, 0.85) for e in narrowpsf])
+        if filter_psf:
+            self.psf = np.array([psf_cleaner(e) for e in self.psf])
 
         x, y = np.linspace(-(Ny-1)/2, (Ny-1)/2, Ny), np.linspace(-(Nx-1)/2, (Nx-1)/2, Nx)
         self.X, self.Y = np.meshgrid(x, y)
@@ -351,7 +400,7 @@ class DoublyLensedQuasarFitter:
 
     def _plot_model(self, params, modelfunc):
         nrow = len(self.bands)
-        fig, axs = plt.subplots(nrow, 3, figsize=(6, 2*nrow))
+        fig, axs = plt.subplots(nrow, 3, figsize=(6, 1.8*nrow))
         axs = axs.reshape((nrow, 3))
         mod = modelfunc(params)
         data = self.data
@@ -380,9 +429,9 @@ class DoublyLensedQuasarFitter:
                 fig.colorbar(im, cax=cax, orientation='vertical')
                 axs[i, j].axis('off')
                 axs[i, j].set_title(f'{band} {title}')
-                axs[i, j].plot([x1+dx, x2+dx], [y1+dy, y2+dy], 'x', color='red')
+                axs[i, j].plot([x1+dx, x2+dx], [y1+dy, y2+dy], 'x', color='red', ms=3, alpha=0.8)
                 if 'galparams' in params and 'positions' in params['galparams']:
-                    axs[i, j].plot([xg+dx], [yg+dy], 'x', color='orange')
+                    axs[i, j].plot([xg+dx], [yg+dy], 'x', color='orange', ms=3, alpha=0.8)
         plt.tight_layout()
         return fig, axs
 
@@ -443,11 +492,16 @@ class DoublyLensedQuasarFitter:
         fig, axs = plt.subplots(nrows=3, ncols=N)
         for i, (b, d, n, p) in enumerate(zip(self.bands, data, noisemap, psf)):
             axs[0, i].set_title(b)
-            axs[0, i].imshow(d)
-            axs[1, i].imshow(n)
-            axs[2, i].imshow(p)
+            axs[0, i].imshow(d, origin='lower')
+            axs[1, i].imshow(n, origin='lower')
+            axs[2, i].imshow(p**0.5, origin='lower')
             for ax in axs[:, i]:
-                ax.axis('off')
+                ax.set_xticks([])
+                ax.set_yticks([])
+            axs[0, 0].set_ylabel('data')
+            axs[1, 0].set_ylabel('noisemap')
+            axs[2, 0].set_ylabel('PSF**0.5')
+
         plt.tight_layout()
         plt.show()
 

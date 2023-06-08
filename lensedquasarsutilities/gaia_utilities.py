@@ -1,7 +1,7 @@
 import astropy.units as u
 from astropy.coordinates import SkyCoord
 from astroquery.gaia import Gaia
-
+from astropy.table import vstack
 
 from lensedquasarsutilities.formatting import get_J2000_name
 
@@ -54,15 +54,24 @@ def get_similar_stars(ra, dec, threshold_distance, mag_estimate=None, verbose=Fa
         print(f"Found {len(available)} potential stars.")
         print(f"Magnitudes: {[round(e['phot_g_mean_mag'],2) for e in available]}.")
 
-    good = available[(available['phot_g_mean_mag'] < mag_estimate) * (toobright < available['phot_g_mean_mag'])]
+    nottoobright = available[(toobright < available['phot_g_mean_mag'])]
+    if len(nottoobright) == 0:
+        return 0., ([], [])
+
+    good = nottoobright[(nottoobright['phot_g_mean_mag'] < mag_estimate)]
+    decent = nottoobright[(nottoobright['phot_g_mean_mag'] >= mag_estimate)]
+    # say we are satisfied with one good, or a few faint ones.
+    score = 0.3 * len(decent) + len(good)
+    found = vstack([good, decent])
+
     if verbose:
-        print(f"We have {len(good)} stars with {mag_estimate} > mag > {toobright}.")
+        print(f"We have {len(good)} stars with {mag_estimate} > mag > {toobright}, and {len(decent)} fainter ones.")
 
     # just return the coordinates
-    ras = [g['ra'] for g in good]
-    decs = [g['dec'] for g in good]
+    ras = [g['ra'] for g in found]
+    decs = [g['dec'] for g in found]
 
-    return ras, decs
+    return score, (ras, decs)
 
 
 def get_positionangles_separations(ra, dec, searchradiusarcsec, name=None):
@@ -149,4 +158,7 @@ def get_positionangles_separations(ra, dec, searchradiusarcsec, name=None):
 
 
 if __name__ == "__main__":
-    ras, decs = get_similar_stars(320.6075, -16.357, 50, verbose=True)
+    # ras, decs = get_similar_stars(320.6075, -16.357, 50, verbose=True)
+    ra, dec = 40.0768, -2.1474
+    threshold_distance = 100
+    score, (ras, decs) = get_similar_stars(ra, dec, threshold_distance, mag_estimate=20.14, verbose=False, toobright=17.3)

@@ -21,6 +21,7 @@ def download_legacy_survey_cutout(ra, dec, size, downloaddir=None, filename=None
     :param size: arcsec
     :param downloaddir: string, where to put the data
     :param filename: optional, give a special name to the resulting fits file
+    :param verbose: bool, default False
     :return: savepath where the data was saved
     """
     if not filename:
@@ -61,7 +62,7 @@ def download_legacy_survey_cutout(ra, dec, size, downloaddir=None, filename=None
         raise LegacySurveyNoData(f"No Legacy Survey DR10 data at {ra, dec}.")
 
     if verbose:
-        print(f"Downloaded {len(hdulist)} Legacy Survey images and varmaps, that is before checking them.")
+        print(f"Downloaded {len(hdulist)} Legacy Survey images and varmaps, that is before checking and stacking.")
 
     # ADD GAUSSIAN NOISE, eliminate first hdu which has no data.
     estimate_and_add_gaussian_noise(savepath, verbose=verbose)

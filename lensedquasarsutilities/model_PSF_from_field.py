@@ -69,7 +69,8 @@ def estimate_psf_from_extracted_h5(h5filepath, upsampling_factor=2, redo=False, 
             try:
                 # we overwrite stars and sigma_2 because the routine might have eliminated some of them.
                 narrowpsf, fullmodel, stars, sigma_2, loss_history = estimate_psf(stars, noisemaps**2, masks,
-                                                                                  upsampling_factor=upsampling_factor)
+                                                                                  upsampling_factor=upsampling_factor,
+                                                                                  debug=False)
                 noisemaps = sigma_2**0.5
 
                 # store the estimated PSF in the hdf5 file.
@@ -145,8 +146,11 @@ def estimate_psf(stars, sigma_2, masks, upsampling_factor=2, debug=False):
     max_real_value = np.nanmax(sigma_2[sigma_2 != np.inf])
     replacement_value = 10 * max_real_value
     sigma_2[np.isnan(sigma_2)] = replacement_value
+    stars[np.isnan(stars)] = 0.
     # and infs ...
     sigma_2[np.isinf(sigma_2)] = replacement_value
+    stars[np.isinf(stars)] = 0.
+
     # and negative values!!
     # find a typical low positive value
     typical_low = np.nanpercentile(sigma_2[sigma_2 > 0.], 0.5)
@@ -242,7 +246,8 @@ def estimate_psf(stars, sigma_2, masks, upsampling_factor=2, debug=False):
     return narrowpsf, fullmodel, stars, sigma_2, L1 + optim.loss_history
 
 
-def download_and_extract(ra, dec, workdir, survey='legacysurvey', mag_estimate=None, verbose=False):
+def download_and_extract(ra, dec, workdir, survey='legacysurvey', mag_estimate=None, min_score_psfstars=2.,
+                         limit_bright_mag_psfstar=None, verbose=False):
     """
     This is a procedure, more than an atomic function. We do the following:
      - query the region around ra, dec for gaia detections, looking for stars we can use to model the PSF
@@ -257,12 +262,19 @@ def download_and_extract(ra, dec, workdir, survey='legacysurvey', mag_estimate=N
     :param survey: from which survey shoulde get the imaging data?
     :param mag_estimate: float, optional, approx. magnitude of the images of the lens. Used to find the right
                                 nearby stars to model the PSF. if None, queries gaia to try and find out by itself
+    :param min_score_psfstars: float, default 2.0. Relates to minimum number of stars required for PSF.
+                               One star as bright as the object but not saturated -> +1 in score,
+                               one fainter star -> +0.3 in score. With default 2, we need, e.g., 1 bright star and 4
+                               faint ones.
+    :param limit_bright_mag_psfstar: float, default None. Stars under this magnitude are not considered. If none,
+                                     reads default (by survey) from config file.
     :param verbose: Bool, default False.
     :return:
     """
     if survey not in config.supported_surveys:
         raise AssertionError(f"Don't know how to download from with this survey: {survey}")
-
+    if limit_bright_mag_psfstar is None:
+        limit_bright_mag_psfstar = config.limit_psf_star_magnitude[survey]
     workdir = Path(workdir)
 
     # Very early on, we are going to check whether the data has already been downloaded and the cutouts extracted.
@@ -283,13 +295,15 @@ def download_and_extract(ra, dec, workdir, survey='legacysurvey', mag_estimate=N
     # downloading the images
     # try first with a "small" field (100 arcsec)
     fieldsize = 100
-    goodstars = get_similar_stars(ra, dec, fieldsize/2, mag_estimate=mag_estimate, verbose=verbose)
+    score, goodstars = get_similar_stars(ra, dec, fieldsize/2, mag_estimate=mag_estimate, verbose=verbose,
+                                         toobright=limit_bright_mag_psfstar)
     # if not, try making it bigger:
-    while len(goodstars[0]) < 1 and fieldsize < 250:
+    while score < min_score_psfstars and fieldsize < 250:
         if verbose:
             print(f'Making field bigger to find PSF stars: {fieldsize:.0f} arcseconds.')
         fieldsize *= 1.2
-        goodstars = get_similar_stars(ra, dec, fieldsize/2, mag_estimate=mag_estimate, verbose=verbose)
+        score, goodstars = get_similar_stars(ra, dec, fieldsize/2, mag_estimate=mag_estimate, verbose=verbose,
+                                             toobright=limit_bright_mag_psfstar)
     # at this point, if still nothing we give up ...
     if len(goodstars[0]) < 1:
         raise RuntimeError(f"Really cannot find stars around {(ra, dec)} ...")
@@ -299,7 +313,7 @@ def download_and_extract(ra, dec, workdir, survey='legacysurvey', mag_estimate=N
 
     # extracting the cutouts
     cutouts = {}
-    names = 'abcde'  # no need for more than 5 stars, evah
+    names = 'abcdefg'  # no need for more than 7 stars, evah
     for rastar, decstar, name in zip(*goodstars, names):
         cutouts[name] = extract_stamps(savepath_fits, rastar, decstar, survey, cutout_size=5)
 
