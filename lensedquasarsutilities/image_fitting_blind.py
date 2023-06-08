@@ -53,14 +53,15 @@ def prepare_fitter_from_h5(h5file, filter_psf=True, verbose=False):
         psfdata.append(psf)
 
     upsampling_factor = data[band]['0']['psf_supersampling_factor']
-    print(f"Preparing a multi band models using {len(bands)} bands, data size {lens.shape[1]} pixels.")
+    if verbose:
+        print(f"Preparing a multi band models using {len(bands)} bands, data size {lens.shape[1]} pixels.")
     lensdata, noisedata, psfdata = np.array(lensdata), np.array(noisedata), np.array(psfdata)
     model = DoublyLensedQuasarFitter(lensdata, noisedata, psfdata, upsampling_factor, bands, filter_psf)
 
     return model
 
 
-def psf_cleaner(psf, frac_suppressed=0.5):
+def psf_cleaner(psf, frac_suppressed=0.4):
     """
         filters the edges of the PSF by
         - fitting a 2D gaussian
@@ -71,8 +72,6 @@ def psf_cleaner(psf, frac_suppressed=0.5):
         :param frac_suppressed: float, fraction of the pixels (determined by inspecting the levels of the
                                 fitted 2d gaussian) to be suppressed.
     """
-    import numpy as np
-    from scipy.optimize import least_squares
 
     def gaussian_2d(xy, amp, x0, y0, sigma_x, sigma_y):
         x, y = xy
@@ -172,10 +171,33 @@ class DoublyLensedQuasarFitter:
         return profile
 
     def elliptical_sersic_profile_convolved(self, I_e, r_e, x0, y0, n, ellip, theta, psf):
+        """
+        this is what we call in the model.
+        :param I_e: amplitude
+        :param r_e: radius
+        :param x0: x coord
+        :param y0: y coord
+        :param n: n parameter
+        :param ellip: ellipticity
+        :param theta: angle
+        :param psf: the psf by which we convolve the profile.
+        :return:
+        """
         profile = self.elliptical_sersic_profile(I_e, r_e, x0, y0, n, ellip, theta)
         return fftconvolve(profile, psf, mode='same')
 
     def translate_and_scale_psf(self, dx, dy, amplitude, psf):
+        """
+          scales the PSF down to the resolution of the model, then translates it by dx, dy
+          (could be x,y but since this is a translation, called them dx, dy) and multiplies the result by the
+          amplitude. This is a way of adding the PSF to the model.
+          This method is used in the `self.model*` functions.
+        :param dx: float, x coordinate of the point source to be modelled
+        :param dy: float, y coordinate of the point source to be modelled
+        :param amplitude: some kind of flux.
+        :param psf: the actual array to be interpolated onto the model.
+        :return: the downscaled, translated and multiplied by amplitude PSF, ready to be added to the model.
+        """
         outshape = self.X.shape
         supersampling = self.upsampling_factor
         scale = jnp.array((1. / supersampling, 1. / supersampling))
@@ -192,6 +214,11 @@ class DoublyLensedQuasarFitter:
 
     @partial(jit, static_argnums=(0,))
     def model_no_galaxy(self, params):
+        """
+         interpolates the PSF at the positions and amplitudes specified by the `params` dictionary, in each band.
+        :param params: dictionary of parameters
+        :return: 3D array containing the model.
+        """
 
         x1, y1, x2, y2 = params['positions']
 
@@ -211,6 +238,12 @@ class DoublyLensedQuasarFitter:
 
     @partial(jit, static_argnums=(0,))
     def model_with_galaxy(self, params):
+        """
+         interpolates the PSF at the positions and amplitudes specified by the `params` dictionary, then adds a sersic.
+         In each band.
+        :param params: dictionary of parameters
+        :return: 3D array containing the model.
+        """
         # first only point sources:
         model = self.model_no_galaxy(params)
         # next, prepare the sersic params:
@@ -232,15 +265,15 @@ class DoublyLensedQuasarFitter:
 
     def residuals_with_galaxy(self, params):
         model = self.model_with_galaxy(params)
-        return ((model - self.data) / self.noisemap).flatten()
+        return (model - self.data) / self.noisemap
 
     def residuals_no_galaxy(self, params):
         model = self.model_no_galaxy(params)
-        return ((model - self.data) / self.noisemap).flatten()
+        return (model - self.data) / self.noisemap
 
     def reduced_chi2_no_galaxy(self, params):
         residuals = self.residuals_no_galaxy(params)
-        chi_squared = np.sum(residuals ** 2)
+        chi_squared = np.sum(residuals**2)
         dof = self.data.size - len(params)
 
         reduced_chi_squared = chi_squared / dof
@@ -248,27 +281,30 @@ class DoublyLensedQuasarFitter:
 
     def reduced_chi2_with_galaxy(self, params):
         residuals = self.residuals_with_galaxy(params)
-        chi_squared = np.sum(residuals ** 2)
+        chi_squared = np.sum(residuals**2)
         dof = self.data.size - len(params)
 
         reduced_chi_squared = chi_squared / dof
         return reduced_chi_squared
 
     def optimize_no_galaxy(self, initial_guess):
-        res = least_squares(self.residuals_no_galaxy, initial_guess)
+        res = least_squares(lambda pps: self.residuals_no_galaxy(pps).flatten(),
+                            initial_guess)
         self.param_optim_no_galaxy = res.x
         return res.x
 
     def optimize_with_galaxy(self, initial_guess):
-        res = least_squares(self.residuals_with_galaxy, initial_guess)
+        res = least_squares(lambda pps: self.residuals_with_galaxy(pps).flatten(),
+                            initial_guess)
         self.param_optim_with_galaxy = res.x
         return res.x
 
-    def sample(self, num_warmup=2000, num_samples=1000, num_chains=1,
+    def sample(self, num_warmup=20_000, num_samples=10_000, num_chains=1,
                position_scale=10., positions_prior_type="box",
                include_galaxy=True, force_galaxy_between_points=True):
         """
-        Trying to fit our data without initial guess with a sampler.
+        Trying to fit our data without initial guess with a sampler. Advice: use an insanely large number of steps,
+        because no more half measures. It takes approximately 2 minutes on a GPU for 100_000 steps so yeah ...
 
         :param num_warmup: steps for warmup
         :param num_samples: steps for actual sampling
@@ -397,6 +433,11 @@ class DoublyLensedQuasarFitter:
         return mcmc
 
     def _plot_model(self, params, modelfunc):
+        """
+        :param params: dictionary of parameters.
+        :param modelfunc: Which class method should we use to transform the parameters into a model?
+        :return: matplotlib figure and axes.
+        """
         nrow = len(self.bands)
         fig, axs = plt.subplots(nrow, 3, figsize=(6, 1.8*nrow))
         axs = axs.reshape((nrow, 3))
@@ -427,13 +468,20 @@ class DoublyLensedQuasarFitter:
                 fig.colorbar(im, cax=cax, orientation='vertical')
                 axs[i, j].axis('off')
                 axs[i, j].set_title(f'{band} {title}')
-                axs[i, j].plot([x1+dx, x2+dx], [y1+dy, y2+dy], 'x', color='red', ms=3, alpha=0.8)
+                axs[i, j].plot([x1 + dx, x2 + dx], [y1 + dy, y2 + dy], 'x', color='red', ms=3, alpha=0.8)
                 if 'galparams' in params and 'positions' in params['galparams']:
-                    axs[i, j].plot([xg+dx], [yg+dy], 'x', color='orange', ms=3, alpha=0.8)
+                    axs[i, j].plot([xg + dx], [yg + dy], 'x', color='orange', ms=3, alpha=0.8)
         plt.tight_layout()
         return fig, axs
 
-    def _plot_model_color(self, params, modelfunc):
+    def _plot_model_color(self, params, modelfunc, band_indexes):
+        """
+          do a color plot of our model!
+        :param params: dictionary of parameters
+        :param modelfunc: class method to use to produce the models
+        :param band_indexes: list, which bands should be used? must be a list of integers of length 3.
+        :return: matplotlib figure, axes
+        """
 
         fig, axs = plt.subplots(1, 3, figsize=(6, 2))
 
@@ -457,6 +505,12 @@ class DoublyLensedQuasarFitter:
         return fig, axs
 
     def plot_model_no_galaxy(self, params=None):
+        """
+        plots the data, model and residuals. Tries to use the galaxyless model and parameters.
+        :param params: dictionary of parameters, default None (then uses the class attribute saved when running the
+                       sampler)
+        :return: matplotlib figure and axes.
+        """
         if params is None:
             if self.param_mediansampler_no_galaxy is not None:
                 params = self.param_mediansampler_no_galaxy
@@ -470,6 +524,12 @@ class DoublyLensedQuasarFitter:
         return self._plot_model(params, self.model_no_galaxy)
 
     def plot_model_with_galaxy(self, params=None):
+        """
+        plots the data, model and residuals. Tries to use the model and parameters with galaxy.
+        :param params: dictionary of parameters, default None (then uses the class attribute saved when running the
+                       sampler)
+        :return: matplotlib figure and axes.
+        """
         if params is None:
             if self.param_mediansampler_with_galaxy is not None:
                 params = self.param_mediansampler_with_galaxy
@@ -483,6 +543,10 @@ class DoublyLensedQuasarFitter:
         return self._plot_model(params, self.model_with_galaxy)
 
     def view_data(self):
+        """
+        mostly a debug function, check the data, noisemaps and PSFs in every band.
+        :return: nothing
+        """
         psf = self.psf
         N = len(psf)
         data = self.data
@@ -505,6 +569,11 @@ class DoublyLensedQuasarFitter:
 
     @staticmethod
     def convert_lists_to_arrays(data):
+        """
+        utility function used when saving the model into an hdf5 file.
+        :param data: anything, if it's a list or a float, we'll make it an array that can be stored in an hdf5 file.
+        :return: hdf5-i-fied data
+        """
         if isinstance(data, dict):
             return {key: DoublyLensedQuasarFitter.convert_lists_to_arrays(value) for key, value in data.items()}
         elif isinstance(data, list):
@@ -518,6 +587,11 @@ class DoublyLensedQuasarFitter:
 
     @staticmethod
     def convert_arrays_to_lists(data):
+        """
+        reverse process of the sister function above.
+        :param data: some array
+        :return: de-hdf5-i-fied data
+        """
         if isinstance(data, dict):
             return {key: DoublyLensedQuasarFitter.convert_arrays_to_lists(value) for key, value in data.items()}
         elif isinstance(data, np.ndarray):
@@ -526,6 +600,11 @@ class DoublyLensedQuasarFitter:
             return data
 
     def to_hdf5(self, filename):
+        """
+        saves the model to an hdf5 file that can be loaded later with `from_hdf5`.
+        :param filename: string or Path, where should we save our model?
+        :return: Nothing
+        """
         # attributes to save
         attributes = {
             "data": self.data,
@@ -541,14 +620,17 @@ class DoublyLensedQuasarFitter:
             "Y": self.Y,
         }
 
-        # Save the attributes to the hdf5 file
         save_dict_to_hdf5(filename, attributes)
 
     @classmethod
     def from_hdf5(cls, filename):
+        """
+         Creates a new DoublyLensedQuasarFitter instance, restoring previously saved data and parameter.
+        :param filename: string or Path, where the dump of the model is located.
+        :return: a DoublyLensedQuasarFitter instance
+        """
         # Load the attributes dict from the hdf5 file
         attributes = load_dict_from_hdf5(filename)
-        print(attributes)
 
         # convert any ndarray attributes that are not data back to their original type
         for key, value in attributes.items():
@@ -562,13 +644,15 @@ class DoublyLensedQuasarFitter:
                         attributes[key] = value[0]
 
         # convert any ndarray attributes that were list back to their original type, cuz we can.
-        attributes["param_mediansampler_no_galaxy"] = cls.convert_arrays_to_lists(attributes["param_mediansampler_no_galaxy"])
-        attributes["param_mediansampler_with_galaxy"] = cls.convert_arrays_to_lists(attributes["param_mediansampler_with_galaxy"])
+        pnogalaxy = attributes["param_mediansampler_no_galaxy"]
+        attributes["param_mediansampler_no_galaxy"] = cls.convert_arrays_to_lists(pnogalaxy)
+        pwgalaxy = attributes["param_mediansampler_with_galaxy"]
+        attributes["param_mediansampler_with_galaxy"] = cls.convert_arrays_to_lists(pwgalaxy)
 
         # new object without calling __init__
         new_instance = cls.__new__(cls)
 
-        # setting the attributes of the new object
+        # adding the attributes
         for key, value in attributes.items():
             setattr(new_instance, key, value)
 
