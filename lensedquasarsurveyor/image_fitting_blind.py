@@ -32,6 +32,7 @@ def prepare_fitter_from_h5(h5file, filter_psf=True, verbose=False):
     """
     data = load_dict_from_hdf5(h5file)
     bands = list(data['lens'].keys())
+    bands = sort_filters(bands)
 
     lensdata = []
     noisedata = []
@@ -58,6 +59,11 @@ def prepare_fitter_from_h5(h5file, filter_psf=True, verbose=False):
     model = DoublyLensedQuasarFitter(lensdata, noisedata, psfdata, upsampling_factor, bands, filter_psf)
 
     return model
+
+
+def sort_filters(strings):
+    order = ['g', 'r', 'i', 'z', 'y']
+    return sorted(strings, key=lambda s: (order.index(s[0].lower()), s.lower()))
 
 
 def psf_cleaner(psf, frac_suppressed=0.25):
@@ -120,6 +126,8 @@ class DoublyLensedQuasarFitter:
 
         """
 
+        sortedbandnames = sort_filters(bandnames)
+        assert sortedbandnames == bandnames, "Your filter are not properly sorted! Sort them according to g,r,i,z,y"
         shape = data.shape
         assert shape == noisemap.shape
 
@@ -151,6 +159,7 @@ class DoublyLensedQuasarFitter:
         self.param_optim_no_galaxy = None
         self.param_mediansampler_no_galaxy = None
         self.param_mediansampler_with_galaxy = None
+        self.mcmc = None
 
     def elliptical_sersic_profile(self, I_e, r_e, x0, y0, n, ellip, theta):
         # ellipticity and orientation parameters
@@ -299,7 +308,7 @@ class DoublyLensedQuasarFitter:
         return res.x
 
     def sample(self, num_warmup=20_000, num_samples=10_000, num_chains=1,
-               position_scale=10., positions_prior_type="box",
+               position_scale=10., positions_prior_type="box", max_band_offset=1.,
                include_galaxy=True, force_galaxy_between_points=True):
         """
         Trying to fit our data without initial guess with a sampler. Advice: use an insanely large number of steps,
@@ -312,6 +321,7 @@ class DoublyLensedQuasarFitter:
                                Either width of a centered box, or scale of a centered gaussian depending on
                                `position_prior_type`
         :param positions_prior_type: string, either "gaussian" or "box".
+        :param max_band_offset: float, max translation allowed between frames.
         :param include_galaxy: bool, whether we include extra parameters for a Sersic profile in the model.
         :param force_galaxy_between_points: bool, default True, whether the galaxy is forced to lie somewhere
                                             between the lensed images or not.
@@ -355,8 +365,8 @@ class DoublyLensedQuasarFitter:
                 A1 = numpyro.sample(f'A1_{band}', dist.Uniform(-100., 200.))  # since we normalize our data, this range
                 A2 = numpyro.sample(f'A2_{band}', dist.Uniform(-100., 200.))  # should be fine ...
                 params[band] = (A1, A2)
-                dx = numpyro.sample(f'dx_{band}', dist.Uniform(-1.0, 1.0))  # had gaussian prior here, but
-                dy = numpyro.sample(f'dy_{band}', dist.Uniform(-1.0, 1.0))  # was getting insane translations
+                dx = numpyro.sample(f'dx_{band}', dist.Uniform(-max_band_offset, max_band_offset))
+                dy = numpyro.sample(f'dy_{band}', dist.Uniform(-max_band_offset, max_band_offset))
                 params[f'offsets_{band}'] = dx, dy
 
             if not include_galaxy:
@@ -409,7 +419,11 @@ class DoublyLensedQuasarFitter:
         rng_key = random.PRNGKey(0)
         mcmc.run(rng_key, self.data, self.noisemap)
         mcmc.print_summary()
+        self.unpack_params_mcmc(mcmc, include_galaxy)
+        self.mcmc = mcmc
+        return mcmc
 
+    def unpack_params_mcmc(self, mcmc, include_galaxy):
         # and now the great unpacking.
         pps = {'galparams': {}}
         medians = {k: np.median(val) for k, val in mcmc.get_samples().items()}
@@ -429,8 +443,6 @@ class DoublyLensedQuasarFitter:
             self.param_mediansampler_with_galaxy = pps
         else:
             self.param_mediansampler_no_galaxy = pps
-
-        return mcmc
 
     def _plot_model(self, params, modelfunc):
         """
@@ -567,6 +579,45 @@ class DoublyLensedQuasarFitter:
         plt.tight_layout()
         plt.show()
 
+    def get_sersic_SED(self, params):
+
+        # prepare the sersic params:
+        xg, yg = params['galparams']['positions']
+        xgs = jnp.array([xg + params[f'offsets_{band}'][0] for band in self.bands])
+        ygs = jnp.array([yg + params[f'offsets_{band}'][1] for band in self.bands])
+        I_es = jnp.array([params['galparams'][f'I_e_{band}'] for band in self.bands])
+        r_e, n, ellip, theta = params['galparams']['morphology']
+        # we'll have to produce one model per band, vectorize
+        vecsersic = vmap(
+            lambda x, y, ie, psf: self.elliptical_sersic_profile_convolved(ie, r_e, x, y, n, ellip, theta, psf),
+            in_axes=(0, 0, 0, 0)
+        )
+        psfs = jnp.array([self.translate_and_scale_psf(-0.5, -0.5, 1., self.psf[i]) for i in range(len(self.bands))])
+        sersics = vecsersic(xgs, ygs, I_es, psfs)
+        fluxes = np.array([np.sum(sersics[i]) for i in range(len(self.bands))])
+        magnitudes = -2.5 * np.log10(self.scale * fluxes)
+        return magnitudes
+
+    def get_ps_SEDs(self, params):
+        x1, y1, x2, y2 = params['positions']
+
+        A1s = jnp.array([params[band][0] for band in self.bands])
+        A2s = jnp.array([params[band][1] for band in self.bands])
+
+        xs1 = jnp.array([x1 + params[f'offsets_{band}'][0] for band in self.bands])
+        ys1 = jnp.array([y1 + params[f'offsets_{band}'][1] for band in self.bands])
+        xs2 = jnp.array([x2 + params[f'offsets_{band}'][0] for band in self.bands])
+        ys2 = jnp.array([y2 + params[f'offsets_{band}'][1] for band in self.bands])
+        vecpsf = vmap(lambda x, y, a, psf: self.translate_and_scale_psf(x, y, a, psf), in_axes=(0, 0, 0, 0))
+        p1 = vecpsf(xs1, ys1, A1s, self.psf)
+        p2 = vecpsf(xs2, ys2, A2s, self.psf)
+        fluxes1 = np.array([np.sum(p1[i]) for i in range(len(self.bands))])
+        fluxes2 = np.array([np.sum(p2[i]) for i in range(len(self.bands))])
+        mags1 = -2.5 * np.log10(self.scale * fluxes1)
+        mags2 = -2.5 * np.log10(self.scale * fluxes2)
+
+        return mags1, mags2
+
     @staticmethod
     def convert_lists_to_arrays(data):
         """
@@ -610,6 +661,7 @@ class DoublyLensedQuasarFitter:
             "data": self.data,
             "noisemap": self.noisemap,
             "psf": self.psf,
+            "scale": np.array([self.scale]),
             "bands": np.array([np.string_(band) for band in self.bands]),  # encode strings as bytes
             "upsampling_factor": np.array([self.upsampling_factor]),
             "param_optim_no_galaxy": self.convert_lists_to_arrays(self.param_optim_no_galaxy),
@@ -655,6 +707,7 @@ class DoublyLensedQuasarFitter:
         # adding the attributes
         for key, value in attributes.items():
             setattr(new_instance, key, value)
+        new_instance.mcmc = None
 
         return new_instance
 

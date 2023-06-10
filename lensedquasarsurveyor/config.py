@@ -5,9 +5,9 @@ band_header_keyword = {
    'hsc': 'FILTER'
 }
 limit_psf_star_magnitude = {
-    'legacysurvey': 16.5,
-    'panstarrs': 16.,
-    'hsc': 18.
+    'legacysurvey': 16.8,
+    'panstarrs': 16.3,
+    'hsc': 18.4
 }
 
 if not set(band_header_keyword.keys()) == set(supported_surveys):
