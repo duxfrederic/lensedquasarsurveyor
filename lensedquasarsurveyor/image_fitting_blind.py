@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
@@ -12,6 +14,7 @@ import jax.numpy as jnp
 from jax.scipy.signal import fftconvolve
 from jax import random
 from jax.image import scale_and_translate
+from jaxopt import ScipyMinimize
 import numpyro
 import numpyro.distributions as dist
 
@@ -161,6 +164,23 @@ class DoublyLensedQuasarFitter:
         self.param_mediansampler_with_galaxy = None
         self.mcmc = None
 
+    def remove_band(self, bandname):
+        """
+        erases `bandname` out of existence from this model.
+
+        :param bandname: string, name of the band to remove
+        :return: Nothing
+        """
+        try:
+            index = self.bands.index(bandname)
+        except ValueError:
+            print(f"{bandname} is not in our bands. Current bands: {self.bands}")
+            return
+        self.bands.pop(index)
+        self.data = np.delete(self.data, index, 0)
+        self.noisemap = np.delete(self.noisemap, index, 0)
+        self.psf = np.delete(self.psf, index, 0)
+
     def elliptical_sersic_profile(self, I_e, r_e, x0, y0, n, ellip, theta):
         # ellipticity and orientation parameters
         q = 1 - ellip
@@ -279,10 +299,24 @@ class DoublyLensedQuasarFitter:
         model = self.model_no_galaxy(params)
         return (model - self.data) / self.noisemap
 
+    def count_parameters(self, obj):
+        if isinstance(obj, dict):
+            # if the object is a dictionary, apply this function to each item
+            return sum(self.count_parameters(v) for v in obj.values())
+        elif isinstance(obj, list):
+            # if the object is a list, apply this function to each item
+            return sum(self.count_parameters(v) for v in obj)
+        elif isinstance(obj, np.ndarray):
+            # if the object is a numpy array, return the number of elements
+            return obj.size
+        else:
+            # else, assume it's a scalar and return 1
+            return 1
+
     def reduced_chi2_no_galaxy(self, params):
         residuals = self.residuals_no_galaxy(params)
         chi_squared = np.sum(residuals**2)
-        dof = self.data.size - len(params)
+        dof = self.data.size - self.count_parameters(params)
 
         reduced_chi_squared = chi_squared / dof
         return reduced_chi_squared
@@ -290,22 +324,50 @@ class DoublyLensedQuasarFitter:
     def reduced_chi2_with_galaxy(self, params):
         residuals = self.residuals_with_galaxy(params)
         chi_squared = np.sum(residuals**2)
-        dof = self.data.size - len(params)
+        dof = self.data.size - self.count_parameters(params)
 
         reduced_chi_squared = chi_squared / dof
         return reduced_chi_squared
 
-    def optimize_no_galaxy(self, initial_guess):
-        res = least_squares(lambda pps: self.residuals_no_galaxy(pps).flatten(),
-                            initial_guess)
-        self.param_optim_no_galaxy = res.x
-        return res.x
+    def arrayify(self, dic):
+        for key, value in dic.items():
+            if isinstance(value, dict):
+                self.arrayify(value)
+            elif isinstance(value, list):
+                dic[key] = np.array(value, dtype=np.float32)
+            elif isinstance(value, np.ndarray) or isinstance(value, jnp.ndarray):
+                pass
+            elif isinstance(value, float):
+                pass
+                #dic[key] = np.array([value], dtype=np.float32)
 
-    def optimize_with_galaxy(self, initial_guess):
-        res = least_squares(lambda pps: self.residuals_with_galaxy(pps).flatten(),
-                            initial_guess)
-        self.param_optim_with_galaxy = res.x
-        return res.x
+    def optimize_no_galaxy(self, initial_guess=None, method='Nelder-Mead'):
+        if not initial_guess:
+            if not self.param_mediansampler_no_galaxy:
+                self.sample(num_samples=1000, num_warmup=1000, include_galaxy=False)
+            initial_guess = self.param_mediansampler_no_galaxy
+
+        opt = ScipyMinimize(method=method, fun=self.reduced_chi2_no_galaxy)
+        # yeah, run it a few times
+        initial_guess = deepcopy(initial_guess)
+        self.arrayify(initial_guess)
+        res = opt.run(initial_guess)
+        self.param_optim_no_galaxy = res.params
+        return res.params
+
+    def optimize_with_galaxy(self, initial_guess=None, method='Nelder-Mead'):
+        if not initial_guess:
+            if not self.param_mediansampler_with_galaxy:
+                self.sample(num_samples=1000, num_warmup=1000, include_galaxy=True, force_galaxy_between_points=True)
+            initial_guess = self.param_mediansampler_with_galaxy
+
+        opt = ScipyMinimize(method=method, fun=self.reduced_chi2_with_galaxy)
+        # yeah, run it a few times
+        initial_guess = deepcopy(initial_guess)
+        self.arrayify(initial_guess)
+        res = opt.run(initial_guess)
+        self.param_optim_with_galaxy = res.params
+        return res.params
 
     def sample(self, num_warmup=20_000, num_samples=10_000, num_chains=1,
                position_scale=10., positions_prior_type="box", max_band_offset=1.,
@@ -564,6 +626,7 @@ class DoublyLensedQuasarFitter:
         data = self.data
         noisemap = self.noisemap
         fig, axs = plt.subplots(nrows=3, ncols=N)
+        axs = axs.reshape((3, N))
         for i, (b, d, n, p) in enumerate(zip(self.bands, data, noisemap, psf)):
             axs[0, i].set_title(b)
             axs[0, i].imshow(d, origin='lower')
@@ -617,6 +680,12 @@ class DoublyLensedQuasarFitter:
         mags2 = -2.5 * np.log10(self.scale * fluxes2)
 
         return mags1, mags2
+
+    @staticmethod
+    def get_separation(params, pixelsize):
+        x1, y1, x2, y2 = params['positions']
+        sep = (x1 - x2)**2 + (y1 - y2)**2
+        return pixelsize * sep**0.5
 
     @staticmethod
     def convert_lists_to_arrays(data):
