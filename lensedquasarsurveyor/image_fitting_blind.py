@@ -5,7 +5,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from scipy.optimize import least_squares
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, map_coordinates, center_of_mass, shift
 
 from jax import jit
 from jax import vmap
@@ -779,6 +779,86 @@ class DoublyLensedQuasarFitter:
         new_instance.mcmc = None
 
         return new_instance
+
+    def resize_other_model(self, other_model, pixel_size, other_pixel_size, roughalign=True):
+        """
+
+        :param other_model:  an instance of another model. We will create a copy of it, and resize its data to
+                             match the resolution of "our" (the present instance) model.
+        :param pixel_size: float, the pixel scale (e.g., in arcseconds) of our model.
+        :param other_pixel_size: float, the pixel scale (e.g., arcseconds) of the other model.
+        :param roughalign: bool, default True, whether to align the data of the other model with ours
+                           w.r.t. their centers of masses.
+        :return: a copy of the "other_model", with a resolution matching that of the present model.
+        """
+        rescale_factor = pixel_size / other_pixel_size
+        transformed_model = deepcopy(other_model)
+
+        # in prevision of eventually aligning if roughalign is True.
+        ourcx, ourcy = center_of_mass(np.mean(self.data, axis=0))
+        theircx, theircy = center_of_mass(np.mean(transformed_model.data, axis=0))
+        theircx *= rescale_factor
+        theircy *= rescale_factor
+
+        # we'll always aim to downsample rather than supersample ...don't want to create fake data
+        # this is why we probably shouldn't merge HSC and pan-starrs data, would be a waste
+        # considering the much higher depth and resolution of HSC.
+        # so, assert that the target shape is smaller or equal than our shape.
+        assert rescale_factor <= 1, "Merge the other way around, we need upsampling"
+        # now transform data, noisemap, psf.
+        for typ in ['data', 'noisemap', 'psf']:
+            transformed = []
+            for i in range(len(other_model.data)):
+                img1 = getattr(self, typ)[0]  # reference
+                img2 = getattr(transformed_model, typ)[i]
+
+                # coordinate grid for img2 of the same size as img1
+                coords = np.mgrid[0:img1.shape[0], 0:img1.shape[1]]
+                m1, m2 = np.max(coords, axis=(1, 2))
+
+                # scale the grid by the rescale factor
+                coords = coords * rescale_factor
+                M1, M2 = np.max(coords, axis=(1, 2))
+                # re-center
+                coords[0] -= (M1 - m1) / 2.
+                coords[1] -= (M2 - m2) / 2.
+                # use map_coordinates to interpolate img2 onto the new grid
+                rescaled_img2 = map_coordinates(img2, coords, order=3, mode='nearest')
+
+                # finally, if align ... align
+                if roughalign and (typ != 'psf'):
+                    rescaled_img2 = shift(rescaled_img2, ((ourcx-theircx)/2, (ourcy-theircy)/2), mode='nearest')
+
+                transformed.append(rescaled_img2)
+            setattr(transformed_model, typ, np.array(transformed))
+        setattr(transformed_model, "X", self.X)
+        setattr(transformed_model, "Y", self.Y)
+        return transformed_model
+
+    def merge_model(self, othermodel, pixel_size, other_pixel_size, band_prefix=''):
+        """
+        Takes another model, resamples it to our resolution, merges its data, and returns a copy containing the
+        combined data, noisemaps and PSFs.
+        By the way, we want upsampling, so pixel_size should be smaller than other_pixel_size.
+
+        :param othermodel: the other model to merge with ours
+        :param pixel_size: float, pixel size of our data
+        :param other_pixel_size: float, pixel size of the data of the other model
+        :param band_prefix: string, default '', prefix to add to the band names of the other model
+        :return: a copy of our model, but with the resampled data of the other model merged into ours.
+        """
+        resized_other = self.resize_other_model(othermodel, pixel_size, other_pixel_size)
+        resized_other.bands = [f"{band_prefix}_{band}" for band in resized_other.bands]
+        allbands = self.bands + resized_other.bands
+        assert len(allbands) == len(set(allbands)), "You need to give me a band prefix, we have clashing band names"
+
+        merged = deepcopy(self)
+        merged.bands = allbands
+        for typ in ['data', 'noisemap', 'psf']:
+            setattr(merged,
+                    typ,
+                    np.concatenate((getattr(merged, typ), getattr(resized_other, typ)), axis=0))
+        return merged
 
 
 if __name__ == "__main__":
