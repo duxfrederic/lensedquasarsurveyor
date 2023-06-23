@@ -247,7 +247,7 @@ def estimate_psf(stars, sigma_2, masks, upsampling_factor=2, debug=False):
 
 
 def download_and_extract(ra, dec, workdir, survey='legacysurvey', mag_estimate=None, min_score_psfstars=2.,
-                         limit_bright_mag_psfstar=None, verbose=False):
+                         limit_bright_mag_psfstar=None, initial_search_box=100., verbose=False):
     """
     This is a procedure, more than an atomic function. We do the following:
      - query the region around ra, dec for gaia detections, looking for stars we can use to model the PSF
@@ -268,6 +268,7 @@ def download_and_extract(ra, dec, workdir, survey='legacysurvey', mag_estimate=N
                                faint ones.
     :param limit_bright_mag_psfstar: float, default None. Stars under this magnitude are not considered. If none,
                                      reads default (by survey) from config file.
+    :param initial_search_box: float, arcseconds. width of the box in which we start looking for PSF stars.
     :param verbose: Bool, default False.
     :return:
     """
@@ -294,7 +295,7 @@ def download_and_extract(ra, dec, workdir, survey='legacysurvey', mag_estimate=N
     # ok, now we can proceed.
     # downloading the images
     # try first with a "small" field (100 arcsec)
-    fieldsize = 100
+    fieldsize = initial_search_box
     score, goodstars = get_similar_stars(ra, dec, fieldsize/2, mag_estimate=mag_estimate, verbose=verbose,
                                          toobright=limit_bright_mag_psfstar)
     # if not, try making it bigger:
