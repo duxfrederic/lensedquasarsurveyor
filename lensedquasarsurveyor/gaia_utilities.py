@@ -6,13 +6,18 @@ from astropy.table import vstack
 from lensedquasarsurveyor.formatting import get_J2000_name
 
 
-def find_gaia_stars_around_coords(ra, dec, radiusarcsec):
+def find_gaia_stars_around_coords(ra, dec, radiusarcsec, release='dr3'):
     """
 
     :param ra:  float, degrees
     :param dec:  float, degrees
     :param radiusarcsec:  float, arcseconds
+    :param release: str, default 'dr3'. Either 'dr3' or 'dr2'
     """
+
+    assert release.lower() in ['dr2', 'dr3']
+    Gaia.MAIN_GAIA_TABLE = f"gaia{release.lower()}.gaia_source"
+
     coord = SkyCoord(ra=ra, dec=dec,
                      unit=(u.degree, u.degree),
                      frame='icrs')
