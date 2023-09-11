@@ -835,7 +835,7 @@ class DoublyLensedQuasarFitter:
         setattr(transformed_model, "Y", self.Y)
         return transformed_model
 
-    def merge_model(self, othermodel, pixel_size, other_pixel_size, band_prefix=''):
+    def merge_model(self, othermodel, pixel_size, other_pixel_size, flux_scaling_other_model=None, band_prefix=''):
         """
         Takes another model, resamples it to our resolution, merges its data, and returns a copy containing the
         combined data, noisemaps and PSFs.
@@ -844,20 +844,37 @@ class DoublyLensedQuasarFitter:
         :param othermodel: the other model to merge with ours
         :param pixel_size: float, pixel size of our data
         :param other_pixel_size: float, pixel size of the data of the other model
+        :param flux_scaling_other_model: float, by how much the other data should be scaled to match the photometry of the present model. good luck figuring this out. For LS vs Panstarrs: ps_flux = 10 * ls_flux.
         :param band_prefix: string, default '', prefix to add to the band names of the other model
         :return: a copy of our model, but with the resampled data of the other model merged into ours.
         """
-        resized_other = self.resize_other_model(othermodel, pixel_size, other_pixel_size)
+        rescaleflux = True
+        if flux_scaling_other_model is None:
+            print("Watch out, we won't be scaling the fluxes of the other model. Don't trust the colors of the resulting combination.")
+            flux_scaling_other_model = 1.
+            rescaleflux = False
+        resized_other = self.resize_other_model(deepcopy(othermodel), pixel_size, other_pixel_size)
         resized_other.bands = [f"{band_prefix}_{band}" for band in resized_other.bands]
         allbands = self.bands + resized_other.bands
         assert len(allbands) == len(set(allbands)), "You need to give me a band prefix, we have clashing band names"
 
         merged = deepcopy(self)
         merged.bands = allbands
+
+        if rescaleflux:
+            merged.data *= merged.scale
+            merged.noisemap *= merged.scale
+            resized_other.data *= resized_other.scale * flux_scaling_other_model
+            resized_other.noisemap *= resized_other.scale * flux_scaling_other_model
         for typ in ['data', 'noisemap', 'psf']:
             setattr(merged,
                     typ,
                     np.concatenate((getattr(merged, typ), getattr(resized_other, typ)), axis=0))
+        if rescaleflux:
+            merged.scale = np.percentile(merged.data, 99.9)
+            merged.data /= merged.scale
+            merged.noisemap /= merged.scale
+
         return merged
 
 

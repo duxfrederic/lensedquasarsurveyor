@@ -192,7 +192,7 @@ def estimate_psf(stars, sigma_2, masks, upsampling_factor=2, debug=False):
         'kwargs_background': kwargs_init['kwargs_background'],
     }
 
-    parameters = ParametersPSF(model, kwargs_init, kwargs_fixed,
+    parameters = ParametersPSF(kwargs_init, kwargs_fixed,
                                kwargs_up=kwargs_up,
                                kwargs_down=kwargs_down)
     loss = Loss(stars, model, parameters, sigma_2, N, regularization_terms='l1_starlet',
@@ -219,7 +219,7 @@ def estimate_psf(stars, sigma_2, masks, upsampling_factor=2, debug=False):
         'kwargs_background': {},
     }
 
-    parameters = ParametersPSF(model, kwargs_partial, kwargs_fixed,
+    parameters = ParametersPSF(kwargs_partial, kwargs_fixed,
                                kwargs_up=kwargs_up,
                                kwargs_down=kwargs_down)
     loss = Loss(stars, model, parameters, sigma_2, N, regularization_terms='l1_starlet',
