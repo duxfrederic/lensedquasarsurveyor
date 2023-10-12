@@ -25,7 +25,10 @@ def spherical_to_tangent_plane(RA, Dec, RA0, Dec0):
     (a tuple of floats in arseconds, distances from (31,32) on the tangent plane)
     """
 
-    RA_rad, Dec_rad, RA0_rad, Dec0_rad = np.deg2rad([RA, Dec, RA0, Dec0])
+    RA_rad  = np.deg2rad(RA)
+    Dec_rad = np.deg2rad(Dec)
+    RA0_rad = np.deg2rad(RA0)
+    Dec0_rad = np.deg2rad(Dec0)
 
     delta_RA = RA_rad - RA0_rad
 
