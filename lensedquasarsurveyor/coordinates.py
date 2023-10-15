@@ -1,4 +1,7 @@
 import numpy as np
+from astropy import units as u
+from astropy.coordinates import SkyCoord
+
 
 def spherical_to_tangent_plane(RA, Dec, RA0, Dec0):
     """
@@ -39,4 +42,23 @@ def spherical_to_tangent_plane(RA, Dec, RA0, Dec0):
 
     # radians to degrees, then multiply by 3600 for arcseconds
     return np.degrees(np.arctan(x)) * 3600, np.degrees(np.arctan(y)) * 3600
+
+
+def equatorial_to_galactic(ra, dec):
+    """
+    Convert equatorial J2000 coordinates (RA, Dec) to galactic coordinates (l, b).
+
+    Parameters:
+        ra (float): Right Ascension in degrees.
+        dec (float): Declination in degrees.
+
+    Returns:
+        (float, float): Galactic longitude l and latitude b in degrees.
+    """
+    c = SkyCoord(ra=ra*u.degree, dec=dec*u.degree, frame='icrs')
+
+    l = c.galactic.l.degree
+    b = c.galactic.b.degree
+
+    return l, b
 
