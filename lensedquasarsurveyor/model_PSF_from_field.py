@@ -10,7 +10,7 @@ from starred.psf.psf import PSF
 from starred.psf.loss import Loss
 from starred.psf.parameters import ParametersPSF
 from starred.utils.generic_utils import save_fits
-from starred.utils.optimization import Optimizer
+from starred.optim.optimization import Optimizer
 from starred.utils import ds9reg
 from starred.plots import plot_function as ptf
 from starred.utils.noise_utils import propagate_noise
