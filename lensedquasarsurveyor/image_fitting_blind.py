@@ -479,6 +479,7 @@ class DoublyLensedQuasarFitter:
         kernel = numpyro.infer.BarkerMH(numpyromodel)
         mcmc = numpyro.infer.MCMC(kernel, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains)
         rng_key = random.PRNGKey(0)
+        breakpoint()
         mcmc.run(rng_key, self.data, self.noisemap)
         mcmc.print_summary()
         self.unpack_params_mcmc(mcmc, include_galaxy)

@@ -554,7 +554,7 @@ class f2nimage:
 
         if label is not None:
             # Then we write it :
-            textwidth = self.draw.textsize(label, font=self.labelfont)[0]
+            textwidth = 5
             self.draw.text((pilx - float(textwidth)/2.0 + 2, pily + pilr + 4), label, fill=colour, font=self.labelfont)
 
     def drawrectangle(self, xa, xb, ya, yb, colour=None, label=None):
@@ -574,7 +574,7 @@ class f2nimage:
         self.draw.rectangle([(pilxa, pilyb-1), (pilxb+1, pilya)], outline=colour)
 
         if label is not None:
-            textwidth = self.draw.textsize(label, font=self.labelfont)[0]
+            textwidth = 5
             self.draw.text(((pilxa + pilxb)/2.0 - float(textwidth)/2.0 + 1, pilya + 2), label,
                            fill=colour, font=self.labelfont)
 
@@ -625,7 +625,7 @@ class f2nimage:
 
         imgwidth = self.pilimage.size[0]
         imgheight = self.pilimage.size[1]
-        textwidth = self.draw.textsize(titlestring, font=self.titlefont)[0]
+        textwidth = 5
         textxpos = imgwidth/2.0 - textwidth/2.0
         textypos = imgheight - 30
 

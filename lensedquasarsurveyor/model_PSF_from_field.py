@@ -190,6 +190,7 @@ def estimate_psf(stars, sigma_2, masks, upsampling_factor=2, debug=False):
         'kwargs_moffat': {},
         'kwargs_gaussian': {},
         'kwargs_background': kwargs_init['kwargs_background'],
+        'kwargs_distortion': {}
     }
 
     parameters = ParametersPSF(kwargs_init, kwargs_fixed,
@@ -217,6 +218,7 @@ def estimate_psf(stars, sigma_2, masks, upsampling_factor=2, debug=False):
         'kwargs_moffat': kwargs_partial['kwargs_moffat'],
         'kwargs_gaussian': kwargs_partial['kwargs_gaussian'],
         'kwargs_background': {},
+        'kwargs_distortion': {}
     }
 
     parameters = ParametersPSF(kwargs_partial, kwargs_fixed,
@@ -240,7 +242,7 @@ def estimate_psf(stars, sigma_2, masks, upsampling_factor=2, debug=False):
     ###########################################################################################
     # book keeping
     narrowpsf = model.get_narrow_psf(**kwargs_final, norm=True)
-    fullmodel = np.array([model.model(i, **kwargs_final) for i in range(stars.shape[0])])
+    fullmodel = np.array(model.model(**kwargs_final))
     ###########################################################################################
 
     return narrowpsf, fullmodel, stars, sigma_2, L1 + optim.loss_history
